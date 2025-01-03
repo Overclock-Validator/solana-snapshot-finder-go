@@ -1,35 +1,46 @@
 package main
 
-import (
-	"flag"
-)
+import "github.com/spf13/viper"
 
 type Config struct {
-	ThreadsCount     int
-	RPCAddress       string
-	Slot             int
-	Version          string
-	MaxSnapshotAge   int
-	MinDownloadSpeed int
-	MaxLatency       int
-	SnapshotPath     string
-	NumOfRetries     int
-	SleepBeforeRetry int
+	RPCAddress       string   `mapstructure:"rpc_address"`
+	SnapshotPath     string   `mapstructure:"snapshot_path"`
+	MinDownloadSpeed int      `mapstructure:"min_download_speed"`
+	MaxLatency       int      `mapstructure:"max_latency"`
+	NumOfRetries     int      `mapstructure:"num_of_retries"`
+	SleepBeforeRetry int      `mapstructure:"sleep_before_retry"`
+	Blacklist        []string `mapstructure:"blacklist"` // Add blacklist support
 }
 
-func ParseConfig() Config {
-	config := Config{}
-	flag.IntVar(&config.ThreadsCount, "threads-count", 1000, "Number of concurrent threads")
-	flag.StringVar(&config.RPCAddress, "rpc-address", "https://api.mainnet-beta.solana.com", "RPC node address")
-	flag.IntVar(&config.Slot, "slot", 0, "Search for a specific slot")
-	flag.StringVar(&config.Version, "version", "", "Snapshot version")
-	flag.IntVar(&config.MaxSnapshotAge, "max-snapshot-age", 1300, "Max snapshot age in slots")
-	flag.IntVar(&config.MinDownloadSpeed, "min-download-speed", 60, "Min download speed in MB/s")
-	flag.IntVar(&config.MaxLatency, "max-latency", 100, "Max latency in ms")
-	flag.StringVar(&config.SnapshotPath, "snapshot-path", "./snapshots", "Snapshot download path")
-	flag.IntVar(&config.NumOfRetries, "num-of-retries", 5, "Number of retries")
-	flag.IntVar(&config.SleepBeforeRetry, "sleep", 7, "Sleep duration between retries")
-	flag.Parse()
+func LoadConfig(configPath string) (Config, error) {
+	var config Config
 
-	return config
+	// Configure viper
+	viper.SetConfigName("config")   // Name of the file (without extension)
+	viper.SetConfigType("yaml")     // Type of the file (yaml, json, etc.)
+	viper.AddConfigPath(configPath) // Path to look for the config file
+	viper.AddConfigPath(".")        // Current directory fallback
+
+	// Set defaults
+	viper.SetDefault("rpc_address", "https://api.mainnet-beta.solana.com")
+	viper.SetDefault("snapshot_path", "./snapshots")
+	viper.SetDefault("min_download_speed", 100)
+	viper.SetDefault("max_latency", 200)
+	viper.SetDefault("num_of_retries", 3)
+	viper.SetDefault("sleep_before_retry", 5)
+	viper.SetDefault("blacklist", []string{}) // Default to an empty blacklist
+
+	// Read the config
+	err := viper.ReadInConfig()
+	if err != nil {
+		return config, err
+	}
+
+	// Unmarshal the config into the struct
+	err = viper.Unmarshal(&config)
+	if err != nil {
+		return config, err
+	}
+
+	return config, nil
 }

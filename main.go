@@ -6,8 +6,14 @@ import (
 
 // Main function
 func main() {
-	config := ParseConfig()
+	configPath := "." // Directory containing the config file
+	config, err := LoadConfig(configPath)
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
 	log.Println("Starting Solana Snapshot Finder...")
+	log.Printf("Loaded Config: %+v", config)
 
 	// Get the current slot from the default RPC endpoint
 	defaultSlot := getDefaultSlot(config)
@@ -23,14 +29,14 @@ func main() {
 		return
 	}
 
-	// Fetch RPC nodes
-	rpcs := fetchRPCNodes(config)
+	// Fetch RPC nodes with retries
+	nodes := fetchRPCNodes(config)
 
 	// Evaluate nodes
-	results := evaluateNodes(rpcs, config, defaultSlot)
+	results := evaluateNodesWithVersions(nodes, config, defaultSlot)
 
 	// Summarize and decide
-	summarizeResults(results)
+	summarizeResultsWithVersions(results)
 
 	// Select and download the best RPC snapshot
 	bestRPC := selectBestRPC(results)

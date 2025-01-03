@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -14,11 +15,16 @@ var DEFAULT_HEADERS = map[string]string{
 	"Content-Type": "application/json",
 }
 
-func GetRPCNodes(rpcAddress string, retries int) ([]string, error) {
+type RPCNode struct {
+	Address string
+	Version string
+}
+
+func GetRPCNodes(rpcAddress string, retries int, blacklist []string) ([]RPCNode, []string, error) {
 	payload := []byte(`{"jsonrpc":"2.0", "id":1, "method":"getClusterNodes"}`)
 	req, err := http.NewRequest("POST", rpcAddress, bytes.NewBuffer(payload))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
+		return nil, nil, fmt.Errorf("failed to create request: %v", err)
 	}
 
 	// Add default headers
@@ -37,26 +43,48 @@ func GetRPCNodes(rpcAddress string, retries int) ([]string, error) {
 		time.Sleep(2 * time.Second) // Add delay between retries
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch RPC nodes after %d retries: %v", retries, err)
+		return nil, nil, fmt.Errorf("failed to fetch RPC nodes after %d retries: %v", retries, err)
 	}
 	defer resp.Body.Close()
 
 	var result struct {
 		Result []struct {
-			RPC string `json:"rpc"`
+			RPC     string `json:"rpc"`
+			Version string `json:"version"`
 		} `json:"result"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode RPC nodes response: %v", err)
+		return nil, nil, fmt.Errorf("failed to decode RPC nodes response: %v", err)
 	}
 
-	rpcs := []string{}
+	nodes := []RPCNode{}
+	addresses := []string{}
 	for _, node := range result.Result {
-		if node.RPC != "" {
-			rpcs = append(rpcs, node.RPC)
+		if node.RPC == "" {
+			continue
+		}
+
+		// Extract the IP portion from the RPC address
+		rpcIP := strings.Split(node.RPC, ":")[0]
+
+		// Check if the IP is in the blacklist
+		isBlacklisted := false
+		for _, blocked := range blacklist {
+			if rpcIP == blocked {
+				isBlacklisted = true
+				break
+			}
+		}
+
+		if !isBlacklisted {
+			nodes = append(nodes, RPCNode{
+				Address: node.RPC,
+				Version: node.Version,
+			})
+			addresses = append(addresses, node.RPC)
 		}
 	}
-	return rpcs, nil
+	return nodes, addresses, nil
 }
 
 func GetSlot(rpcAddress string) (int, error) {
@@ -113,13 +141,28 @@ func getDefaultSlot(config Config) int {
 }
 
 // Fetches RPC nodes
-func fetchRPCNodes(config Config) []string {
-	rpcs, err := GetRPCNodes(config.RPCAddress, 3) // Retry up to 3 times
-	if err != nil {
-		log.Fatalf("Failed to fetch RPC nodes: %v", err)
+func fetchRPCNodes(config Config) []RPCNode {
+	var nodes []RPCNode
+	var err error
+
+	for attempt := 1; attempt <= config.NumOfRetries; attempt++ {
+		nodes, _, err = GetRPCNodes(config.RPCAddress, config.NumOfRetries, config.Blacklist)
+		if err == nil && len(nodes) > 0 {
+			log.Printf("Fetched %d RPC nodes on attempt %d.", len(nodes), attempt)
+			return nodes
+		}
+
+		log.Printf("Attempt %d/%d to fetch RPC nodes failed: %v", attempt, config.NumOfRetries, err)
+		time.Sleep(2 * time.Second) // Add delay between retries
 	}
-	log.Printf("Found %d nodes. Starting to evaluate their speeds and latencies...", len(rpcs))
-	return rpcs
+
+	if err != nil {
+		log.Fatalf("Failed to fetch RPC nodes after %d retries: %v", config.NumOfRetries, err)
+	} else if len(nodes) == 0 {
+		log.Fatalf("No RPC nodes found after %d retries.", config.NumOfRetries)
+	}
+
+	return nil // Should not reach here
 }
 
 // Selects the best RPC from the evaluated nodes
@@ -129,6 +172,7 @@ func selectBestRPC(results []struct {
 	latency float64
 	slot    int
 	diff    int
+	version string
 	status  string
 }) string {
 	var bestRPC string
@@ -140,5 +184,6 @@ func selectBestRPC(results []struct {
 			bestRPC = result.rpc
 		}
 	}
+
 	return bestRPC
 }

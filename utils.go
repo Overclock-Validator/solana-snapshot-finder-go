@@ -293,13 +293,13 @@ func handleSnapshots(snapshotFiles []string, config Config, defaultSlot int) *In
 	return &highestSnapshot
 }
 
-// Evaluates RPC nodes for speed, latency, and slot difference
-func evaluateNodes(rpcs []string, config Config, defaultSlot int) []struct {
+func evaluateNodesWithVersions(nodes []RPCNode, config Config, defaultSlot int) []struct {
 	rpc     string
 	speed   float64
 	latency float64
 	slot    int
 	diff    int
+	version string
 	status  string // "good", "slow", or "bad"
 } {
 	var wg sync.WaitGroup
@@ -309,14 +309,16 @@ func evaluateNodes(rpcs []string, config Config, defaultSlot int) []struct {
 		latency float64
 		slot    int
 		diff    int
+		version string
 		status  string
-	}, len(rpcs))
+	}, len(nodes))
 
-	for _, rpc := range rpcs {
+	for _, node := range nodes {
 		wg.Add(1)
-		go func(rpc string) {
+		go func(node RPCNode) {
 			defer wg.Done()
 
+			rpc := node.Address
 			if !strings.HasPrefix(rpc, "http://") && !strings.HasPrefix(rpc, "https://") {
 				rpc = "http://" + rpc
 			}
@@ -329,8 +331,9 @@ func evaluateNodes(rpcs []string, config Config, defaultSlot int) []struct {
 					latency float64
 					slot    int
 					diff    int
+					version string
 					status  string
-				}{rpc, 0, 0, 0, 0, "bad"}
+				}{rpc, 0, 0, 0, 0, node.Version, "bad"}
 				return
 			}
 
@@ -345,8 +348,9 @@ func evaluateNodes(rpcs []string, config Config, defaultSlot int) []struct {
 					latency float64
 					slot    int
 					diff    int
+					version string
 					status  string
-				}{rpc, speed, latency, 0, 0, "slow"}
+				}{rpc, speed, latency, 0, 0, node.Version, "slow"}
 				return
 			}
 
@@ -358,8 +362,9 @@ func evaluateNodes(rpcs []string, config Config, defaultSlot int) []struct {
 					latency float64
 					slot    int
 					diff    int
+					version string
 					status  string
-				}{rpc, speed, latency, 0, 0, "slow"}
+				}{rpc, speed, latency, 0, 0, node.Version, "slow"}
 				return
 			}
 
@@ -374,9 +379,10 @@ func evaluateNodes(rpcs []string, config Config, defaultSlot int) []struct {
 				latency float64
 				slot    int
 				diff    int
+				version string
 				status  string
-			}{rpc, speed, latency, slot, diff, status}
-		}(rpc)
+			}{rpc, speed, latency, slot, diff, node.Version, status}
+		}(node)
 	}
 
 	wg.Wait()
@@ -388,6 +394,7 @@ func evaluateNodes(rpcs []string, config Config, defaultSlot int) []struct {
 		latency float64
 		slot    int
 		diff    int
+		version string
 		status  string
 	}
 	for result := range results {
@@ -397,12 +404,13 @@ func evaluateNodes(rpcs []string, config Config, defaultSlot int) []struct {
 }
 
 // Summarizes the results of the node evaluation
-func summarizeResults(results []struct {
+func summarizeResultsWithVersions(results []struct {
 	rpc     string
 	speed   float64
 	latency float64
 	slot    int
 	diff    int
+	version string
 	status  string
 }) {
 	totalNodes := len(results)
@@ -426,7 +434,8 @@ func summarizeResults(results []struct {
 	log.Println("List of good nodes:")
 	for _, result := range results {
 		if result.status == "good" {
-			log.Printf("Node: %s | Speed: %.2f MB/s | Latency: %.2f ms | Slot: %d | Diff: %d", result.rpc, result.speed, result.latency, result.slot, result.diff)
+			log.Printf("Node: %s | Speed: %.2f MB/s | Latency: %.2f ms | Slot: %d | Diff: %d | Version: %s",
+				result.rpc, result.speed, result.latency, result.slot, result.diff, result.version)
 		}
 	}
 }
