@@ -43,7 +43,7 @@ func (pw *ProgressWriter) Write(p []byte) (int, error) {
 
 func MeasureSpeed(url string, measureTime int) (float64, float64, error) {
 	client := &http.Client{
-		Timeout: 10 * time.Second, // Timeout for establishing connection
+		Timeout: 10 * time.Second, // Connection timeout
 	}
 
 	// Measure latency
@@ -53,22 +53,19 @@ func MeasureSpeed(url string, measureTime int) (float64, float64, error) {
 		return 0, 0, fmt.Errorf("failed to fetch URL: %v", err)
 	}
 	defer resp.Body.Close()
-	latency := time.Since(startTime).Milliseconds() // Latency in milliseconds
+	latency := time.Since(startTime).Milliseconds() // Latency in ms
 
 	// Measure download speed
-	chunkSize := 81920 // Match the chunk size used in Python
-	buffer := make([]byte, chunkSize)
-	totalLoaded := int64(0)
-	speeds := []float64{}
+	buffer := make([]byte, 81920) // Chunk size
+	var totalLoaded int64
+	var speeds []float64
+
 	lastTime := time.Now()
-
-	for {
-		if time.Since(startTime).Seconds() >= float64(measureTime) {
-			break
-		}
-
+	for time.Since(startTime).Seconds() < float64(measureTime) {
 		n, err := resp.Body.Read(buffer)
-		totalLoaded += int64(n)
+		if n > 0 {
+			totalLoaded += int64(n)
+		}
 		if err == io.EOF {
 			break
 		}
@@ -76,12 +73,12 @@ func MeasureSpeed(url string, measureTime int) (float64, float64, error) {
 			return 0, float64(latency), fmt.Errorf("error reading response body: %v", err)
 		}
 
-		curTime := time.Now()
-		elapsed := curTime.Sub(lastTime).Seconds()
+		// Calculate speed every second
+		elapsed := time.Since(lastTime).Seconds()
 		if elapsed >= 1 {
-			speed := float64(totalLoaded) / elapsed // Bytes per second
+			speed := float64(totalLoaded) / elapsed // Bytes/sec
 			speeds = append(speeds, speed)
-			lastTime = curTime
+			lastTime = time.Now()
 			totalLoaded = 0
 		}
 	}
@@ -90,7 +87,7 @@ func MeasureSpeed(url string, measureTime int) (float64, float64, error) {
 		return 0, float64(latency), fmt.Errorf("no data collected during the measurement period")
 	}
 
-	medianSpeed := calculateMedian(speeds) / 1024 / 1024 // Convert to MB/s
+	medianSpeed := calculateMedian(speeds) / (1024 * 1024) // Convert to MB/s
 	return medianSpeed, float64(latency), nil
 }
 
@@ -108,40 +105,38 @@ func calculateMedian(values []float64) float64 {
 
 func DownloadSnapshot(rpcAddress, destDir string) error {
 	// Ensure the destination directory exists
-	err := os.MkdirAll(destDir, os.ModePerm)
-	if err != nil {
+	if err := os.MkdirAll(destDir, os.ModePerm); err != nil {
 		return fmt.Errorf("failed to create directory %s: %v", destDir, err)
 	}
 
 	// Check if a full snapshot already exists
 	existingSnapshot, err := findExistingSnapshot(destDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("error finding existing snapshot: %v", err)
 	}
 
 	// Parse the RPC URL
 	baseURL, err := url.Parse(rpcAddress)
 	if err != nil {
-		return fmt.Errorf("invalid RPC URL: %s", rpcAddress)
+		return fmt.Errorf("invalid RPC URL: %s, error: %v", rpcAddress, err)
 	}
 
-	// Update the path based on whether a full snapshot exists
-	var snapshotType string
+	// Determine the snapshot type and path
+	var snapshotType, snapshotPath string
 	if existingSnapshot != "" {
 		fmt.Printf("Existing full snapshot found: %s\n", existingSnapshot)
 		baseURL.Path = "/incremental-snapshot.tar.bz2"
 		snapshotType = "Incremental"
+		snapshotPath = baseURL.String()
 	} else {
 		fmt.Println("No existing full snapshot found. Downloading full snapshot...")
 		baseURL.Path = "/snapshot.tar.bz2"
 		snapshotType = "Full"
+		snapshotPath = baseURL.String()
 	}
 
-	// Use the updated URL
-	url := baseURL.String()
-
-	// Fetch the snapshot
-	resp, err := http.Get(url)
+	// Initiate the download
+	resp, err := http.Get(snapshotPath)
 	if err != nil {
 		return fmt.Errorf("failed to fetch snapshot: %v", err)
 	}
@@ -152,23 +147,24 @@ func DownloadSnapshot(rpcAddress, destDir string) error {
 
 	// Extract the filename from the final URL
 	fileName := filepath.Base(finalURL)
-	destPath := filepath.Join(destDir, fileName)
+	tempPath := filepath.Join(destDir, "tmp-"+fileName) // Temporary file path
+	finalPath := filepath.Join(destDir, fileName)       // Final file path
 
 	// Display snapshot name and type
 	fmt.Printf("%s snapshot: %s\n", snapshotType, fileName)
 
-	// Get the total content length from the response header
+	// Validate content length
 	totalBytes := resp.ContentLength
 	if totalBytes <= 0 {
 		return fmt.Errorf("unable to determine the file size")
 	}
 
-	// Create the output file
-	file, err := os.Create(destPath)
+	// Create the temporary output file
+	tempFile, err := os.Create(tempPath)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %v", err)
 	}
-	defer file.Close()
+	defer tempFile.Close()
 
 	// Track and display progress with speed
 	pw := &ProgressWriter{
@@ -176,7 +172,7 @@ func DownloadSnapshot(rpcAddress, destDir string) error {
 		StartTime:    time.Now(),
 		LastLoggedAt: time.Now(),
 	}
-	_, err = io.Copy(io.MultiWriter(file, pw), resp.Body)
+	_, err = io.Copy(io.MultiWriter(tempFile, pw), resp.Body)
 	if err != nil {
 		return fmt.Errorf("error during download: %v", err)
 	}
@@ -184,6 +180,13 @@ func DownloadSnapshot(rpcAddress, destDir string) error {
 	// Ensure final progress message is printed
 	speed := float64(pw.Downloaded) / 1024 / 1024 / time.Since(pw.StartTime).Seconds()
 	fmt.Printf("\rDownloaded: %d / %d bytes (100%%) | Speed: %.2f MB/s\n", pw.Downloaded, pw.TotalBytes, speed)
+
+	// Rename the temporary file to the final file
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		return fmt.Errorf("failed to rename file: %v", err)
+	}
+
+	fmt.Printf("Snapshot successfully downloaded and saved to: %s\n", finalPath)
 	return nil
 }
 
@@ -302,7 +305,6 @@ func evaluateNodesWithVersions(nodes []RPCNode, config Config, defaultSlot int) 
 	version string
 	status  string // "good", "slow", or "bad"
 } {
-	var wg sync.WaitGroup
 	results := make(chan struct {
 		rpc     string
 		speed   float64
@@ -313,10 +315,36 @@ func evaluateNodesWithVersions(nodes []RPCNode, config Config, defaultSlot int) 
 		status  string
 	}, len(nodes))
 
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, config.WorkerCount) // Semaphore to control concurrency
+
+	// Helper to append results
+	appendResult := func(node RPCNode, rpc string, speed, latency float64, slot, diff int, status string) {
+		results <- struct {
+			rpc     string
+			speed   float64
+			latency float64
+			slot    int
+			diff    int
+			version string
+			status  string
+		}{
+			rpc:     rpc,
+			speed:   speed,
+			latency: latency,
+			slot:    slot,
+			diff:    diff,
+			version: node.Version,
+			status:  status,
+		}
+	}
+
 	for _, node := range nodes {
 		wg.Add(1)
 		go func(node RPCNode) {
 			defer wg.Done()
+			sem <- struct{}{}        // Acquire semaphore
+			defer func() { <-sem }() // Release semaphore
 
 			rpc := node.Address
 			if !strings.HasPrefix(rpc, "http://") && !strings.HasPrefix(rpc, "https://") {
@@ -325,69 +353,42 @@ func evaluateNodesWithVersions(nodes []RPCNode, config Config, defaultSlot int) 
 
 			baseURL, err := url.Parse(rpc)
 			if err != nil {
-				results <- struct {
-					rpc     string
-					speed   float64
-					latency float64
-					slot    int
-					diff    int
-					version string
-					status  string
-				}{rpc, 0, 0, 0, 0, node.Version, "bad"}
+				appendResult(node, rpc, 0, 0, 0, 0, "bad")
 				return
 			}
 
 			baseURL.Path = "/snapshot.tar.bz2"
 			snapshotURL := baseURL.String()
 
+			// Measure speed and latency
 			speed, latency, err := MeasureSpeed(snapshotURL, config.SleepBeforeRetry)
 			if err != nil {
-				results <- struct {
-					rpc     string
-					speed   float64
-					latency float64
-					slot    int
-					diff    int
-					version string
-					status  string
-				}{rpc, speed, latency, 0, 0, node.Version, "slow"}
+				appendResult(node, rpc, speed, latency, 0, 0, "slow")
 				return
 			}
 
+			// Fetch slot
 			slot, err := GetSlot(rpc)
 			if err != nil {
-				results <- struct {
-					rpc     string
-					speed   float64
-					latency float64
-					slot    int
-					diff    int
-					version string
-					status  string
-				}{rpc, speed, latency, 0, 0, node.Version, "slow"}
+				appendResult(node, rpc, speed, latency, 0, 0, "slow")
 				return
 			}
 
+			// Calculate slot difference
 			diff := defaultSlot - slot
 			status := "slow"
 			if speed >= float64(config.MinDownloadSpeed) && latency <= float64(config.MaxLatency) && diff <= 100 {
 				status = "good"
 			}
-			results <- struct {
-				rpc     string
-				speed   float64
-				latency float64
-				slot    int
-				diff    int
-				version string
-				status  string
-			}{rpc, speed, latency, slot, diff, node.Version, status}
+
+			appendResult(node, rpc, speed, latency, slot, diff, status)
 		}(node)
 	}
 
 	wg.Wait()
 	close(results)
 
+	// Collect results
 	var evaluatedResults []struct {
 		rpc     string
 		speed   float64

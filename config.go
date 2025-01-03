@@ -9,7 +9,9 @@ type Config struct {
 	MaxLatency       int      `mapstructure:"max_latency"`
 	NumOfRetries     int      `mapstructure:"num_of_retries"`
 	SleepBeforeRetry int      `mapstructure:"sleep_before_retry"`
-	Blacklist        []string `mapstructure:"blacklist"` // Add blacklist support
+	Blacklist        []string `mapstructure:"blacklist"`
+	PrivateRPC       bool     `mapstructure:"private_rpc"`
+	WorkerCount      int      `mapstructure:"worker_count"`
 }
 
 func LoadConfig(configPath string) (Config, error) {
@@ -28,7 +30,9 @@ func LoadConfig(configPath string) (Config, error) {
 	viper.SetDefault("max_latency", 200)
 	viper.SetDefault("num_of_retries", 3)
 	viper.SetDefault("sleep_before_retry", 5)
-	viper.SetDefault("blacklist", []string{}) // Default to an empty blacklist
+	viper.SetDefault("blacklist", []string{})
+	viper.SetDefault("private_rpc", false)
+	viper.SetDefault("worker_count", 100)
 
 	// Read the config
 	err := viper.ReadInConfig()

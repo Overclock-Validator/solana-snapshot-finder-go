@@ -20,7 +20,7 @@ type RPCNode struct {
 	Version string
 }
 
-func GetRPCNodes(rpcAddress string, retries int, blacklist []string) ([]RPCNode, []string, error) {
+func GetRPCNodes(rpcAddress string, retries int, blacklist []string, privateRPC bool) ([]RPCNode, []string, error) {
 	payload := []byte(`{"jsonrpc":"2.0", "id":1, "method":"getClusterNodes"}`)
 	req, err := http.NewRequest("POST", rpcAddress, bytes.NewBuffer(payload))
 	if err != nil {
@@ -50,6 +50,7 @@ func GetRPCNodes(rpcAddress string, retries int, blacklist []string) ([]RPCNode,
 	var result struct {
 		Result []struct {
 			RPC     string `json:"rpc"`
+			Gossip  string `json:"gossip"`
 			Version string `json:"version"`
 		} `json:"result"`
 	}
@@ -60,28 +61,49 @@ func GetRPCNodes(rpcAddress string, retries int, blacklist []string) ([]RPCNode,
 	nodes := []RPCNode{}
 	addresses := []string{}
 	for _, node := range result.Result {
-		if node.RPC == "" {
-			continue
-		}
+		// Handle regular RPC nodes
+		if node.RPC != "" {
+			rpcIP := strings.Split(node.RPC, ":")[0]
 
-		// Extract the IP portion from the RPC address
-		rpcIP := strings.Split(node.RPC, ":")[0]
+			// Check if the IP is blacklisted
+			isBlacklisted := false
+			for _, blocked := range blacklist {
+				if rpcIP == blocked {
+					isBlacklisted = true
+					break
+				}
+			}
 
-		// Check if the IP is in the blacklist
-		isBlacklisted := false
-		for _, blocked := range blacklist {
-			if rpcIP == blocked {
-				isBlacklisted = true
-				break
+			if !isBlacklisted {
+				nodes = append(nodes, RPCNode{
+					Address: node.RPC,
+					Version: node.Version,
+				})
+				addresses = append(addresses, node.RPC)
 			}
 		}
 
-		if !isBlacklisted {
-			nodes = append(nodes, RPCNode{
-				Address: node.RPC,
-				Version: node.Version,
-			})
-			addresses = append(addresses, node.RPC)
+		// Handle private RPC nodes
+		if privateRPC && node.Gossip != "" {
+			gossipIP := strings.Split(node.Gossip, ":")[0] // Extract gossip IP
+			privateRPCAddress := fmt.Sprintf("%s:8899", gossipIP)
+
+			// Check if the IP is blacklisted
+			isBlacklisted := false
+			for _, blocked := range blacklist {
+				if gossipIP == blocked {
+					isBlacklisted = true
+					break
+				}
+			}
+
+			if !isBlacklisted {
+				nodes = append(nodes, RPCNode{
+					Address: privateRPCAddress,
+					Version: node.Version,
+				})
+				addresses = append(addresses, privateRPCAddress)
+			}
 		}
 	}
 	return nodes, addresses, nil
@@ -146,7 +168,7 @@ func fetchRPCNodes(config Config) []RPCNode {
 	var err error
 
 	for attempt := 1; attempt <= config.NumOfRetries; attempt++ {
-		nodes, _, err = GetRPCNodes(config.RPCAddress, config.NumOfRetries, config.Blacklist)
+		nodes, _, err = GetRPCNodes(config.RPCAddress, config.NumOfRetries, config.Blacklist, config.PrivateRPC)
 		if err == nil && len(nodes) > 0 {
 			log.Printf("Fetched %d RPC nodes on attempt %d.", len(nodes), attempt)
 			return nodes

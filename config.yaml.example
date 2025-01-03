@@ -4,6 +4,8 @@ min_download_speed: 100
 max_latency: 200
 num_of_retries: 5
 sleep_before_retry: 5
+private_rpc: false
+worker_count: 100
 blacklist:
   - "192.168.1.100"
   - "10.0.0.5"
