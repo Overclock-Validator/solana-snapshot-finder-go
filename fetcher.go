@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"time"
 )
@@ -99,4 +100,45 @@ func GetSlot(rpcAddress string) (int, error) {
 	}
 
 	return result.Result, nil
+}
+
+// Fetches the current slot from the default endpoint
+func getDefaultSlot(config Config) int {
+	defaultSlot, err := GetSlot(config.RPCAddress)
+	if err != nil {
+		log.Fatalf("Failed to get slot from default endpoint: %v", err)
+	}
+	log.Printf("Current slot from default endpoint: %d", defaultSlot)
+	return defaultSlot
+}
+
+// Fetches RPC nodes
+func fetchRPCNodes(config Config) []string {
+	rpcs, err := GetRPCNodes(config.RPCAddress, 3) // Retry up to 3 times
+	if err != nil {
+		log.Fatalf("Failed to fetch RPC nodes: %v", err)
+	}
+	log.Printf("Found %d nodes. Starting to evaluate their speeds and latencies...", len(rpcs))
+	return rpcs
+}
+
+// Selects the best RPC from the evaluated nodes
+func selectBestRPC(results []struct {
+	rpc     string
+	speed   float64
+	latency float64
+	slot    int
+	diff    int
+	status  string
+}) string {
+	var bestRPC string
+	var bestSpeed float64
+
+	for _, result := range results {
+		if result.status == "good" && result.speed > bestSpeed {
+			bestSpeed = result.speed
+			bestRPC = result.rpc
+		}
+	}
+	return bestRPC
 }

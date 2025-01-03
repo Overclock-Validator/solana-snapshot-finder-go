@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -256,4 +257,189 @@ func FindHighestAndTrimIncrementals(snapshots []IncrementalSnapshot, maxSnapshot
 
 	// Return the most recent snapshot
 	return snapshots[0], nil
+}
+
+// Reads snapshot files from the snapshot directory
+func getSnapshotFiles(config Config) []string {
+	files, err := os.ReadDir(config.SnapshotPath)
+	if err != nil {
+		log.Fatalf("Failed to read snapshot directory: %v", err)
+	}
+
+	var snapshotFiles []string
+	for _, file := range files {
+		snapshotFiles = append(snapshotFiles, file.Name())
+	}
+	return snapshotFiles
+}
+
+// Handles snapshot parsing, pruning, and logging
+func handleSnapshots(snapshotFiles []string, config Config, defaultSlot int) *IncrementalSnapshot {
+	incrementalSnapshots, err := ParseIncrementalSnapshots(snapshotFiles)
+	if err != nil {
+		log.Printf("Failed to parse incremental snapshots: %v", err)
+		return nil
+	}
+
+	highestSnapshot, err := FindHighestAndTrimIncrementals(incrementalSnapshots, 5, config.SnapshotPath)
+	if err != nil {
+		log.Printf("No incremental snapshots found: %v", err)
+		return nil
+	}
+
+	log.Printf("Highest incremental snapshot: %s | SlotStart: %d | SlotEnd: %d", highestSnapshot.FileName, highestSnapshot.SlotStart, highestSnapshot.SlotEnd)
+	log.Printf("Highest incremental snapshot is %d slots behind the current slot.", defaultSlot-highestSnapshot.SlotEnd)
+
+	return &highestSnapshot
+}
+
+// Evaluates RPC nodes for speed, latency, and slot difference
+func evaluateNodes(rpcs []string, config Config, defaultSlot int) []struct {
+	rpc     string
+	speed   float64
+	latency float64
+	slot    int
+	diff    int
+	status  string // "good", "slow", or "bad"
+} {
+	var wg sync.WaitGroup
+	results := make(chan struct {
+		rpc     string
+		speed   float64
+		latency float64
+		slot    int
+		diff    int
+		status  string
+	}, len(rpcs))
+
+	for _, rpc := range rpcs {
+		wg.Add(1)
+		go func(rpc string) {
+			defer wg.Done()
+
+			if !strings.HasPrefix(rpc, "http://") && !strings.HasPrefix(rpc, "https://") {
+				rpc = "http://" + rpc
+			}
+
+			baseURL, err := url.Parse(rpc)
+			if err != nil {
+				results <- struct {
+					rpc     string
+					speed   float64
+					latency float64
+					slot    int
+					diff    int
+					status  string
+				}{rpc, 0, 0, 0, 0, "bad"}
+				return
+			}
+
+			baseURL.Path = "/snapshot.tar.bz2"
+			snapshotURL := baseURL.String()
+
+			speed, latency, err := MeasureSpeed(snapshotURL, config.SleepBeforeRetry)
+			if err != nil {
+				results <- struct {
+					rpc     string
+					speed   float64
+					latency float64
+					slot    int
+					diff    int
+					status  string
+				}{rpc, speed, latency, 0, 0, "slow"}
+				return
+			}
+
+			slot, err := GetSlot(rpc)
+			if err != nil {
+				results <- struct {
+					rpc     string
+					speed   float64
+					latency float64
+					slot    int
+					diff    int
+					status  string
+				}{rpc, speed, latency, 0, 0, "slow"}
+				return
+			}
+
+			diff := defaultSlot - slot
+			status := "slow"
+			if speed >= float64(config.MinDownloadSpeed) && latency <= float64(config.MaxLatency) && diff <= 100 {
+				status = "good"
+			}
+			results <- struct {
+				rpc     string
+				speed   float64
+				latency float64
+				slot    int
+				diff    int
+				status  string
+			}{rpc, speed, latency, slot, diff, status}
+		}(rpc)
+	}
+
+	wg.Wait()
+	close(results)
+
+	var evaluatedResults []struct {
+		rpc     string
+		speed   float64
+		latency float64
+		slot    int
+		diff    int
+		status  string
+	}
+	for result := range results {
+		evaluatedResults = append(evaluatedResults, result)
+	}
+	return evaluatedResults
+}
+
+// Summarizes the results of the node evaluation
+func summarizeResults(results []struct {
+	rpc     string
+	speed   float64
+	latency float64
+	slot    int
+	diff    int
+	status  string
+}) {
+	totalNodes := len(results)
+	goodNodes := 0
+	slowNodes := 0
+	badNodes := 0
+
+	for _, result := range results {
+		switch result.status {
+		case "good":
+			goodNodes++
+		case "slow":
+			slowNodes++
+		case "bad":
+			badNodes++
+		}
+	}
+
+	log.Printf("Node evaluation complete. Total nodes: %d | Good: %d | Slow: %d | Bad: %d", totalNodes, goodNodes, slowNodes, badNodes)
+
+	log.Println("List of good nodes:")
+	for _, result := range results {
+		if result.status == "good" {
+			log.Printf("Node: %s | Speed: %.2f MB/s | Latency: %.2f ms | Slot: %d | Diff: %d", result.rpc, result.speed, result.latency, result.slot, result.diff)
+		}
+	}
+}
+
+// Downloads the snapshot from the best RPC
+func downloadSnapshot(bestRPC string, config Config) {
+	log.Printf("Best RPC: %s", bestRPC)
+	baseURL, _ := url.Parse(bestRPC)
+	baseURL.Path = "/snapshot.tar.bz2"
+
+	err := DownloadSnapshot(baseURL.String(), config.SnapshotPath)
+	if err != nil {
+		log.Fatalf("Failed to download snapshot: %v", err)
+	}
+	log.Println("Download complete.")
 }
