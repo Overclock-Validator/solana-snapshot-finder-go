@@ -20,8 +20,10 @@ jobs:
         go build -o solana-snapshot-finder
     - name: Archive binary
       run: |
+        echo "Listing files before archiving:"
         ls -l
         tar -czvf solana-snapshot-finder.tar.gz solana-snapshot-finder
+        echo "Listing files after archiving:"
         ls -l
 
     - name: Upload release asset (tar.gz)
