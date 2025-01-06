@@ -21,8 +21,29 @@ jobs:
       with:
         go-version: '1.23'
 
-    - name: Build
-      run: go build -v ./...
+    - name: Build binary
+      run: |
+        go build -o solana-snapshot-finder
+    - name: Archive binary
+      run: |
+        tar -czvf solana-snapshot-findertar.gz solana-snapshot-finder
 
-    - name: Test
-      run: go test -v ./...
+    - name: Upload release asset (tar.gz)
+      uses: actions/upload-release-asset@v1
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./solana-snapshot-finder.tar.gz
+        asset_name: solana-snapshot-finder.tar.gz
+        asset_content_type: application/gzip
+      env:
+        GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+    - name: Upload release asset (binary)
+      uses: actions/upload-release-asset@v1
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./solana-snapshot-finder
+        asset_name: solana-snapshot-finder
+        asset_content_type: application/octet-stream
+      env:
+        GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
