@@ -20,7 +20,7 @@ jobs:
         go build -o solana-snapshot-finder
     - name: Archive binary
       run: |
-        tar -czvf solana-snapshot-findertar.gz solana-snapshot-finder
+        tar -czvf solana-snapshot-finder.tar.gz solana-snapshot-finder
 
     - name: Upload release asset (tar.gz)
       uses: actions/upload-release-asset@v1
