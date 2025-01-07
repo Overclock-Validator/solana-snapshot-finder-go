@@ -109,7 +109,7 @@ func GetRPCNodes(rpcAddress string, retries int, blacklist []string, privateRPC 
 	return nodes, addresses, nil
 }
 
-func GetSlot(rpcAddress string) (int, error) {
+func getReferenceSlot(rpcAddress string) (int, error) {
 	payload := map[string]interface{}{
 		"id":      1,
 		"jsonrpc": "2.0",
@@ -152,15 +152,6 @@ func GetSlot(rpcAddress string) (int, error) {
 	return result.Result, nil
 }
 
-// Fetches the current slot from the default endpoint
-func getDefaultSlot(config Config) int {
-	defaultSlot, err := GetSlot(config.RPCAddress)
-	if err != nil {
-		log.Fatalf("Failed to get slot from default endpoint: %v", err)
-	}
-	log.Printf("Current slot from default endpoint: %d", defaultSlot)
-	return defaultSlot
-}
 
 // Fetches RPC nodes
 func fetchRPCNodes(config Config) []RPCNode {

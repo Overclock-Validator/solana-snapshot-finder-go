@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -39,6 +40,49 @@ func (pw *ProgressWriter) Write(p []byte) (int, error) {
 		fmt.Printf("\rDownloaded: %d / %d bytes (%.2f%%) | Speed: %.2f MB/s", pw.Downloaded, pw.TotalBytes, percentage, speed)
 	}
 	return n, nil
+}
+
+func manageSnapshots(config Config, referenceSlot int) (bool, bool) {
+	log.Println("Checking snapshots...")
+	fullNeeded := false
+	incrementalNeeded := false
+
+	// Check full snapshot
+	fullSnapshot, fullSlot, err := findRecentFullSnapshot(config.SnapshotPath, referenceSlot, config.FullThreshold)
+	if err != nil {
+		log.Printf("Error finding recent full snapshot: %v", err)
+		fullNeeded = true
+	} else {
+		fullDiff := referenceSlot - fullSlot
+		log.Printf("Full snapshot found: %s (Slot: %d, Diff: %d, Threshold: %d)", fullSnapshot, fullSlot, fullDiff, config.FullThreshold)
+		if fullDiff > config.FullThreshold {
+			log.Printf("Full snapshot is outdated. Diff (%d) exceeds threshold (%d).", fullDiff, config.FullThreshold)
+			fullNeeded = true
+		} else {
+			log.Printf("Full snapshot is within threshold.")
+		}
+	}
+
+	// Check incremental snapshot if full snapshot is valid
+	if !fullNeeded {
+		incrementalSnapshot, err := findHighestIncrementalSnapshot(config.SnapshotPath, fullSlot)
+		if err != nil {
+			log.Printf("No valid incremental snapshots found: %v", err)
+			incrementalNeeded = true
+		} else {
+			incrementalDiff := referenceSlot - incrementalSnapshot.SlotEnd
+			log.Printf("Incremental snapshot found: %s (SlotStart: %d, SlotEnd: %d, Diff: %d, Threshold: %d)",
+				incrementalSnapshot.FileName, incrementalSnapshot.SlotStart, incrementalSnapshot.SlotEnd, incrementalDiff, config.IncrementalThreshold)
+			if incrementalDiff > config.IncrementalThreshold {
+				log.Printf("Incremental snapshot is outdated. Diff (%d) exceeds threshold (%d).", incrementalDiff, config.IncrementalThreshold)
+				incrementalNeeded = true
+			} else {
+				log.Printf("Incremental snapshot is within threshold.")
+			}
+		}
+	}
+
+	return fullNeeded, incrementalNeeded
 }
 
 func MeasureSpeed(url string, measureTime int) (float64, float64, error) {
@@ -103,197 +147,11 @@ func calculateMedian(values []float64) float64 {
 	return values[n/2]
 }
 
-func DownloadSnapshot(rpcAddress, destDir string) error {
-	// Ensure the destination directory exists
-	if err := os.MkdirAll(destDir, os.ModePerm); err != nil {
-		return fmt.Errorf("failed to create directory %s: %v", destDir, err)
-	}
-
-	// Check if a full snapshot already exists
-	existingSnapshot, err := findExistingSnapshot(destDir)
-	if err != nil {
-		return fmt.Errorf("error finding existing snapshot: %v", err)
-	}
-
-	// Parse the RPC URL
-	baseURL, err := url.Parse(rpcAddress)
-	if err != nil {
-		return fmt.Errorf("invalid RPC URL: %s, error: %v", rpcAddress, err)
-	}
-
-	// Determine the snapshot type and path
-	var snapshotType, snapshotPath string
-	if existingSnapshot != "" {
-		fmt.Printf("Existing full snapshot found: %s\n", existingSnapshot)
-		baseURL.Path = "/incremental-snapshot.tar.bz2"
-		snapshotType = "Incremental"
-		snapshotPath = baseURL.String()
-	} else {
-		fmt.Println("No existing full snapshot found. Downloading full snapshot...")
-		baseURL.Path = "/snapshot.tar.bz2"
-		snapshotType = "Full"
-		snapshotPath = baseURL.String()
-	}
-
-	// Initiate the download
-	resp, err := http.Get(snapshotPath)
-	if err != nil {
-		return fmt.Errorf("failed to fetch snapshot: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Get the final URL after redirects
-	finalURL := resp.Request.URL.String()
-
-	// Extract the filename from the final URL
-	fileName := filepath.Base(finalURL)
-	tempPath := filepath.Join(destDir, "tmp-"+fileName) // Temporary file path
-	finalPath := filepath.Join(destDir, fileName)       // Final file path
-
-	// Display snapshot name and type
-	fmt.Printf("%s snapshot: %s\n", snapshotType, fileName)
-
-	// Validate content length
-	totalBytes := resp.ContentLength
-	if totalBytes <= 0 {
-		return fmt.Errorf("unable to determine the file size")
-	}
-
-	// Create the temporary output file
-	tempFile, err := os.Create(tempPath)
-	if err != nil {
-		return fmt.Errorf("failed to create file: %v", err)
-	}
-	defer tempFile.Close()
-
-	// Track and display progress with speed
-	pw := &ProgressWriter{
-		TotalBytes:   totalBytes,
-		StartTime:    time.Now(),
-		LastLoggedAt: time.Now(),
-	}
-	_, err = io.Copy(io.MultiWriter(tempFile, pw), resp.Body)
-	if err != nil {
-		return fmt.Errorf("error during download: %v", err)
-	}
-
-	// Ensure final progress message is printed
-	speed := float64(pw.Downloaded) / 1024 / 1024 / time.Since(pw.StartTime).Seconds()
-	fmt.Printf("\rDownloaded: %d / %d bytes (100%%) | Speed: %.2f MB/s\n", pw.Downloaded, pw.TotalBytes, speed)
-
-	// Rename the temporary file to the final file
-	if err := os.Rename(tempPath, finalPath); err != nil {
-		return fmt.Errorf("failed to rename file: %v", err)
-	}
-
-	fmt.Printf("Snapshot successfully downloaded and saved to: %s\n", finalPath)
-	return nil
-}
-
-func findExistingSnapshot(destDir string) (string, error) {
-	// Search for files matching the full snapshot pattern
-	files, err := filepath.Glob(filepath.Join(destDir, "snapshot-*"))
-	if err != nil {
-		return "", fmt.Errorf("failed to search for existing snapshots: %v", err)
-	}
-
-	if len(files) == 0 {
-		return "", nil // No existing snapshot found
-	}
-
-	// Return the most recent snapshot (sorted by name for simplicity)
-	return files[0], nil
-}
-
 // IncrementalSnapshot represents an incremental snapshot with its slots.
 type IncrementalSnapshot struct {
 	FileName  string
 	SlotStart int
 	SlotEnd   int
-}
-
-// ParseIncrementalSnapshots parses a list of file names to find incremental snapshots.
-func ParseIncrementalSnapshots(files []string) ([]IncrementalSnapshot, error) {
-	incrementalSnapshotRegex := `incremental-snapshot-(\d+)-(\d+)-[a-zA-Z0-9]+\.tar\.zst`
-	var snapshots []IncrementalSnapshot
-
-	for _, file := range files {
-		if match := regexp.MustCompile(incrementalSnapshotRegex).FindStringSubmatch(file); match != nil {
-			slotStart, err1 := strconv.Atoi(match[1])
-			slotEnd, err2 := strconv.Atoi(match[2])
-			if err1 != nil || err2 != nil {
-				return nil, fmt.Errorf("failed to parse slots from file %s: %v, %v", file, err1, err2)
-			}
-			snapshots = append(snapshots, IncrementalSnapshot{
-				FileName:  file,
-				SlotStart: slotStart,
-				SlotEnd:   slotEnd,
-			})
-		}
-	}
-
-	return snapshots, nil
-}
-
-func FindHighestAndTrimIncrementals(snapshots []IncrementalSnapshot, maxSnapshots int, basePath string) (IncrementalSnapshot, error) {
-	if len(snapshots) == 0 {
-		return IncrementalSnapshot{}, fmt.Errorf("no incremental snapshots found")
-	}
-
-	// Sort by SlotEnd descending
-	sort.Slice(snapshots, func(i, j int) bool {
-		return snapshots[i].SlotEnd > snapshots[j].SlotEnd
-	})
-
-	// Retain only the most recent `maxSnapshots`
-	if len(snapshots) > maxSnapshots {
-		for _, snapshot := range snapshots[maxSnapshots:] {
-			fullPath := fmt.Sprintf("%s/%s", strings.TrimRight(basePath, "/"), snapshot.FileName)
-			log.Printf("Deleting old incremental snapshot: %s", fullPath)
-			err := os.Remove(fullPath)
-			if err != nil {
-				log.Printf("Failed to delete %s: %v", fullPath, err)
-			}
-		}
-		snapshots = snapshots[:maxSnapshots]
-	}
-
-	// Return the most recent snapshot
-	return snapshots[0], nil
-}
-
-// Reads snapshot files from the snapshot directory
-func getSnapshotFiles(config Config) []string {
-	files, err := os.ReadDir(config.SnapshotPath)
-	if err != nil {
-		log.Fatalf("Failed to read snapshot directory: %v", err)
-	}
-
-	var snapshotFiles []string
-	for _, file := range files {
-		snapshotFiles = append(snapshotFiles, file.Name())
-	}
-	return snapshotFiles
-}
-
-// Handles snapshot parsing, pruning, and logging
-func handleSnapshots(snapshotFiles []string, config Config, defaultSlot int) *IncrementalSnapshot {
-	incrementalSnapshots, err := ParseIncrementalSnapshots(snapshotFiles)
-	if err != nil {
-		log.Printf("Failed to parse incremental snapshots: %v", err)
-		return nil
-	}
-
-	highestSnapshot, err := FindHighestAndTrimIncrementals(incrementalSnapshots, 5, config.SnapshotPath)
-	if err != nil {
-		log.Printf("No incremental snapshots found: %v", err)
-		return nil
-	}
-
-	log.Printf("Highest incremental snapshot: %s | SlotStart: %d | SlotEnd: %d", highestSnapshot.FileName, highestSnapshot.SlotStart, highestSnapshot.SlotEnd)
-	log.Printf("Highest incremental snapshot is %d slots behind the current slot.", defaultSlot-highestSnapshot.SlotEnd)
-
-	return &highestSnapshot
 }
 
 func evaluateNodesWithVersions(nodes []RPCNode, config Config, defaultSlot int) []struct {
@@ -368,7 +226,7 @@ func evaluateNodesWithVersions(nodes []RPCNode, config Config, defaultSlot int) 
 			}
 
 			// Fetch slot
-			slot, err := GetSlot(rpc)
+			slot, err := getReferenceSlot(rpc)
 			if err != nil {
 				appendResult(node, rpc, speed, latency, 0, 0, "slow")
 				return
@@ -441,15 +299,304 @@ func summarizeResultsWithVersions(results []struct {
 	}
 }
 
-// Downloads the snapshot from the best RPC
-func downloadSnapshot(bestRPC string, config Config) {
-	log.Printf("Best RPC: %s", bestRPC)
-	baseURL, _ := url.Parse(bestRPC)
-	baseURL.Path = "/snapshot.tar.bz2"
-
-	err := DownloadSnapshot(baseURL.String(), config.SnapshotPath)
+func cleanTmpDir(tmpDir string) error {
+	files, err := ioutil.ReadDir(tmpDir)
 	if err != nil {
-		log.Fatalf("Failed to download snapshot: %v", err)
+		return fmt.Errorf("failed to read temporary directory %s: %v", tmpDir, err)
 	}
-	log.Println("Download complete.")
+
+	for _, file := range files {
+		if strings.HasPrefix(file.Name(), "tmp-") {
+			tmpFilePath := filepath.Join(tmpDir, file.Name())
+			log.Printf("Removing leftover temporary file: %s", tmpFilePath)
+			err := os.Remove(tmpFilePath)
+			if err != nil {
+				log.Printf("Failed to remove temporary file %s: %v", tmpFilePath, err)
+			}
+		}
+	}
+	return nil
+}
+
+func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string) (string, error) {
+	// Ensure the temporary directory exists
+	err := os.MkdirAll(tmpDir, os.ModePerm)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temporary directory %s: %v", tmpDir, err)
+	}
+
+	// Initiate the download
+	resp, err := http.Get(snapshotURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch snapshot: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Get the final URL after redirects
+	finalURL := resp.Request.URL.String()
+	fileName := filepath.Base(finalURL)
+	if fileName == "" {
+		return "", fmt.Errorf("invalid file name parsed from URL: %s", finalURL)
+	}
+
+	// Define paths for temporary and final files
+	tmpFilePath := filepath.Join(tmpDir, "tmp-"+fileName)
+	finalFilePath := filepath.Join(baseDir, fileName)
+
+	// Create a temporary file for download
+	tmpFile, err := os.Create(tmpFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temporary file %s: %v", tmpFilePath, err)
+	}
+	defer tmpFile.Close()
+
+	// Track download progress
+	pw := &ProgressWriter{
+		TotalBytes:   resp.ContentLength,
+		StartTime:    time.Now(),
+		LastLoggedAt: time.Now(),
+	}
+	_, err = io.Copy(io.MultiWriter(tmpFile, pw), resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("error during snapshot download: %v", err)
+	}
+
+	// Move the file from TMP to the final location
+	err = os.Rename(tmpFilePath, finalFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to move snapshot to %s: %v", finalFilePath, err)
+	}
+
+	// Print final progress
+	speed := float64(pw.Downloaded) / 1024 / 1024 / time.Since(pw.StartTime).Seconds()
+	log.Printf("Download completed: %s | Speed: %.2f MB/s", finalFilePath, speed)
+	return finalFilePath, nil
+}
+
+func downloadSnapshot(rpcAddress string, config Config, snapshotType string, referenceSlot int) error {
+	log.Printf("Downloading %s snapshot from %s", snapshotType, rpcAddress)
+
+	// Define the TMP directory
+	tmpDir := filepath.Join(config.SnapshotPath, "tmp")
+	err := os.MkdirAll(tmpDir, os.ModePerm)
+	if err != nil {
+		return fmt.Errorf("failed to create TMP directory: %v", err)
+	}
+
+	// Clean TMP directory
+	err = cleanTmpDir(tmpDir)
+	if err != nil {
+		return fmt.Errorf("failed to clean TMP directory: %v", err)
+	}
+
+	// Construct URL
+	var snapshotPath string
+	if snapshotType == "incremental" {
+		snapshotPath = "/incremental-snapshot.tar.bz2"
+	} else {
+		snapshotPath = "/snapshot.tar.bz2"
+	}
+	snapshotURL := fmt.Sprintf("%s%s", rpcAddress, snapshotPath)
+	start := time.Now() // Start time for download
+
+	// Download and handle the snapshot
+	finalPath, err := writeSnapshotToFile(snapshotURL, tmpDir, config.SnapshotPath)
+	if err != nil {
+		return fmt.Errorf("failed to download %s snapshot: %v", snapshotType, err)
+	}
+
+	duration := time.Since(start) // End time for download
+	log.Printf("%s snapshot downloaded and saved to: %s | Time: %s", snapshotType, finalPath, duration)
+	return nil
+}
+
+// ExtractFullSnapshotSlot parses a full snapshot file name to extract the slot.
+func ExtractFullSnapshotSlot(fileName string) (int, error) {
+	// Regex for full snapshot: snapshot-<slot>-<hash>.tar.zst
+	fullSnapshotRegex := `snapshot-(\d+)-[a-zA-Z0-9]+\.tar\.zst`
+
+	match := regexp.MustCompile(fullSnapshotRegex).FindStringSubmatch(fileName)
+	if match == nil {
+		return 0, fmt.Errorf("file name does not match full snapshot pattern: %s", fileName)
+	}
+
+	slot, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse slot from full snapshot: %v", err)
+	}
+	return slot, nil
+}
+
+func ExtractIncrementalSnapshotSlots(fileName string) (int, int, error) {
+	// Example regex: incremental-snapshot-<slotStart>-<slotEnd>-<hash>.tar.zst
+	regex := regexp.MustCompile(`incremental-snapshot-(\d+)-(\d+)-[a-zA-Z0-9]+\.tar\.zst`)
+	match := regex.FindStringSubmatch(fileName)
+
+	if len(match) != 3 {
+		return 0, 0, fmt.Errorf("invalid incremental snapshot file name: %s", fileName)
+	}
+
+	slotStart, err1 := strconv.Atoi(match[1])
+	slotEnd, err2 := strconv.Atoi(match[2])
+	if err1 != nil || err2 != nil {
+		return 0, 0, fmt.Errorf("failed to parse slots from file name: %s", fileName)
+	}
+
+	return slotStart, slotEnd, nil
+}
+
+func findRecentFullSnapshot(destDir string, referenceSlot, threshold int) (string, int, error) {
+	// List files in the base directory
+	files, err := ioutil.ReadDir(destDir)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to list files in %s: %v", destDir, err)
+	}
+
+	var mostRecent string
+	var mostRecentSlot int
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		filePath := filepath.Join(destDir, file.Name())
+
+		// Extract the slot from the full snapshot file name
+		slot, err := ExtractFullSnapshotSlot(filePath)
+		if err != nil {
+			log.Printf("Skipping file %s: %v", file.Name(), err)
+			continue
+		}
+
+		// Check if the snapshot is within the threshold
+		diff := referenceSlot - slot
+		if diff > threshold {
+			log.Printf("Skipping snapshot %s: Slot %d is beyond the threshold (%d > %d)", file.Name(), slot, diff, threshold)
+			continue
+		}
+
+		// Update the most recent snapshot
+		if slot > mostRecentSlot {
+			mostRecent = filePath
+			mostRecentSlot = slot
+		}
+	}
+
+	if mostRecent == "" {
+		return "", 0, fmt.Errorf("no recent full snapshot found")
+	}
+
+	log.Printf("Found recent full snapshot: %s (Slot: %d | Diff: %d)", mostRecent, mostRecentSlot, referenceSlot-mostRecentSlot)
+	return mostRecent, mostRecentSlot, nil
+}
+
+func findHighestIncrementalSnapshot(destDir string, baseSlot int) (IncrementalSnapshot, error) {
+	// List files in the base directory
+	files, err := ioutil.ReadDir(destDir)
+	if err != nil {
+		return IncrementalSnapshot{}, fmt.Errorf("failed to list files in %s: %v", destDir, err)
+	}
+
+	var highestSnapshot IncrementalSnapshot
+	var highestSlotEnd int
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		filePath := filepath.Join(destDir, file.Name())
+		startSlot, endSlot, err := ExtractIncrementalSnapshotSlots(filePath)
+		if err != nil {
+			continue // Skip invalid or non-incremental snapshot files
+		}
+
+		// Ensure the snapshot starts after the baseSlot
+		if startSlot != baseSlot {
+			continue
+		}
+
+		// Keep track of the snapshot with the highest end slot
+		if endSlot > highestSlotEnd {
+			highestSlotEnd = endSlot
+			highestSnapshot = IncrementalSnapshot{
+				FileName:  filePath,
+				SlotStart: startSlot,
+				SlotEnd:   endSlot,
+			}
+		}
+	}
+
+	if highestSlotEnd == 0 {
+		return IncrementalSnapshot{}, fmt.Errorf("no valid incremental snapshots found starting at slot %d", baseSlot)
+	}
+	return highestSnapshot, nil
+}
+
+func processSnapshots(config Config) {
+	for attempt := 1; attempt <= config.NumOfRetries; attempt++ {
+		log.Printf("Attempt %d/%d to manage snapshots...", attempt, config.NumOfRetries)
+
+		// Fetch the current reference slot
+		log.Println("Fetching reference slot...")
+		referenceSlot, err := getReferenceSlot(config.RPCAddress)
+		if err != nil {
+			log.Printf("Failed to fetch reference slot on attempt %d: %v", attempt, err)
+			time.Sleep(time.Duration(config.SleepBeforeRetry) * time.Second)
+			continue
+		}
+		log.Printf("Reference Slot: %d", referenceSlot)
+
+		// Manage snapshots
+		fullNeeded, incrementalNeeded := manageSnapshots(config, referenceSlot)
+
+		// If no snapshots are needed, exit the loop
+		if !fullNeeded && !incrementalNeeded {
+			log.Println("All snapshots are up to date. No downloads required.")
+			return
+		}
+
+		// Evaluate nodes if snapshots are needed
+		log.Println("Fetching RPC nodes...")
+		nodes := fetchRPCNodes(config)
+		log.Printf("Evaluating %d nodes...", len(nodes))
+		results := evaluateNodesWithVersions(nodes, config, referenceSlot)
+
+		// Summarize results and select the best RPC node
+		summarizeResultsWithVersions(results)
+		bestRPC := selectBestRPC(results)
+
+		// Download snapshots as required
+		if bestRPC != "" {
+			start := time.Now()
+
+			if fullNeeded {
+				downloadSnapshot(bestRPC, config, "full", referenceSlot)
+				incrementalNeeded = true // Ensure incremental is downloaded after full
+			}
+
+			if incrementalNeeded {
+				downloadSnapshot(bestRPC, config, "incremental", referenceSlot)
+			}
+
+			// Log time taken for downloads
+			duration := time.Since(start)
+			log.Printf("Total download time: %s", duration)
+
+			log.Println("Snapshots downloaded successfully.")
+			return
+		}
+
+		// If successful, exit the loop
+		if bestRPC != "" {
+			log.Println("Snapshots downloaded successfully.")
+			return
+		}
+
+		log.Println("Failed to find suitable RPC nodes or download snapshots. Retrying...")
+	}
+
+	// If all retries fail, log and exit
+	log.Fatalf("Failed to fetch reference slot or manage snapshots after %d attempts.", config.NumOfRetries)
 }
