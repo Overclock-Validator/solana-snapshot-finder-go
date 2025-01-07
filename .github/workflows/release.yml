@@ -17,7 +17,7 @@ jobs:
 
     - name: Build binary
       run: |
-        go build -o solana-snapshot-finder
+        GOOS=linux GOARCH=amd64 go build -o solana-snapshot-finder
     - name: Archive binary
       run: |
         echo "Listing files before archiving:"
