@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -174,7 +175,10 @@ func evaluateNodesWithVersions(nodes []RPCNode, config Config, defaultSlot int) 
 	}, len(nodes))
 
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, config.WorkerCount) // Semaphore to control concurrency
+	sem := make(chan struct{}, config.WorkerCount)
+
+	// Batch progress counter
+	var batchCounter int32
 
 	// Helper to append results
 	appendResult := func(node RPCNode, rpc string, speed, latency float64, slot, diff int, status string) {
@@ -195,6 +199,22 @@ func evaluateNodesWithVersions(nodes []RPCNode, config Config, defaultSlot int) 
 			version: node.Version,
 			status:  status,
 		}
+
+		// Increment the batch counter and print progress
+		completed := atomic.AddInt32(&batchCounter, 1)
+		if completed%100 == 0 {
+			log.Printf("Processed %d nodes...\n", completed)
+		}
+	}
+
+	// Optimized health check function
+	checkHealth := func(rpc string) bool {
+		// Perform a simple health check (optional, depending on the node)
+		resp, err := http.Get(rpc + "/health")
+		if err != nil || resp.StatusCode != http.StatusOK {
+			return false
+		}
+		return true
 	}
 
 	for _, node := range nodes {
@@ -209,6 +229,11 @@ func evaluateNodesWithVersions(nodes []RPCNode, config Config, defaultSlot int) 
 				rpc = "http://" + rpc
 			}
 
+			if !checkHealth(rpc) {
+				appendResult(node, rpc, 0, 0, 0, 0, "bad")
+				return
+			}
+
 			baseURL, err := url.Parse(rpc)
 			if err != nil {
 				appendResult(node, rpc, 0, 0, 0, 0, "bad")
@@ -218,7 +243,7 @@ func evaluateNodesWithVersions(nodes []RPCNode, config Config, defaultSlot int) 
 			baseURL.Path = "/snapshot.tar.bz2"
 			snapshotURL := baseURL.String()
 
-			// Measure speed and latency
+			// Measure speed and latency (optimized)
 			speed, latency, err := MeasureSpeed(snapshotURL, config.SleepBeforeRetry)
 			if err != nil {
 				appendResult(node, rpc, speed, latency, 0, 0, "slow")
@@ -299,6 +324,70 @@ func summarizeResultsWithVersions(results []struct {
 	}
 }
 
+// Dumps good and slow nodes into a JSON file
+func dumpGoodAndSlowNodesToFile(
+	results []struct {
+		rpc     string
+		speed   float64
+		latency float64
+		slot    int
+		diff    int
+		version string
+		status  string
+	},
+	outputFile string,
+) {
+	// Filter good and slow nodes
+	var filteredNodes []struct {
+		RPC     string  `json:"rpc"`
+		Speed   float64 `json:"speed"`
+		Latency float64 `json:"latency"`
+		Slot    int     `json:"slot"`
+		Diff    int     `json:"diff"`
+		Version string  `json:"version"`
+		Status  string  `json:"status"`
+	}
+
+	for _, result := range results {
+		if result.status == "good" || result.status == "slow" {
+			filteredNodes = append(filteredNodes, struct {
+				RPC     string  `json:"rpc"`
+				Speed   float64 `json:"speed"`
+				Latency float64 `json:"latency"`
+				Slot    int     `json:"slot"`
+				Diff    int     `json:"diff"`
+				Version string  `json:"version"`
+				Status  string  `json:"status"`
+			}{
+				RPC:     result.rpc,
+				Speed:   result.speed,
+				Latency: result.latency,
+				Slot:    result.slot,
+				Diff:    result.diff,
+				Version: result.version,
+				Status:  result.status,
+			})
+		}
+	}
+
+	// Write filtered nodes to JSON file
+	file, err := os.Create(outputFile)
+	if err != nil {
+		log.Printf("Error creating output file: %v", err)
+		return
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ") // Pretty print JSON
+	if err := encoder.Encode(filteredNodes); err != nil {
+		log.Printf("Error writing to JSON file: %v", err)
+		return
+	}
+
+	log.Printf("Good and slow nodes saved to %s", outputFile)
+}
+
 func cleanTmpDir(tmpDir string) error {
 	files, err := ioutil.ReadDir(tmpDir)
 	if err != nil {
@@ -318,17 +407,17 @@ func cleanTmpDir(tmpDir string) error {
 	return nil
 }
 
-func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string) (string, error) {
+func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string) (string, int64, error) {
 	// Ensure the temporary directory exists
 	err := os.MkdirAll(tmpDir, os.ModePerm)
 	if err != nil {
-		return "", fmt.Errorf("failed to create temporary directory %s: %v", tmpDir, err)
+		return "", 0, fmt.Errorf("failed to create temporary directory %s: %v", tmpDir, err)
 	}
 
 	// Initiate the download
 	resp, err := http.Get(snapshotURL)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch snapshot: %v", err)
+		return "", 0, fmt.Errorf("failed to fetch snapshot: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -336,7 +425,7 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string) (string, error) {
 	finalURL := resp.Request.URL.String()
 	fileName := filepath.Base(finalURL)
 	if fileName == "" {
-		return "", fmt.Errorf("invalid file name parsed from URL: %s", finalURL)
+		return "", 0, fmt.Errorf("invalid file name parsed from URL: %s", finalURL)
 	}
 
 	// Define paths for temporary and final files
@@ -346,7 +435,7 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string) (string, error) {
 	// Create a temporary file for download
 	tmpFile, err := os.Create(tmpFilePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to create temporary file %s: %v", tmpFilePath, err)
+		return "", 0, fmt.Errorf("failed to create temporary file %s: %v", tmpFilePath, err)
 	}
 	defer tmpFile.Close()
 
@@ -356,21 +445,22 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string) (string, error) {
 		StartTime:    time.Now(),
 		LastLoggedAt: time.Now(),
 	}
-	_, err = io.Copy(io.MultiWriter(tmpFile, pw), resp.Body)
+	var totalBytes int64
+	totalBytes, err = io.Copy(io.MultiWriter(tmpFile, pw), resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("error during snapshot download: %v", err)
+		return "", 0, fmt.Errorf("error during snapshot download: %v", err)
 	}
 
 	// Move the file from TMP to the final location
 	err = os.Rename(tmpFilePath, finalFilePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to move snapshot to %s: %v", finalFilePath, err)
+		return "", 0, fmt.Errorf("failed to move snapshot to %s: %v", finalFilePath, err)
 	}
 
 	// Print final progress
 	speed := float64(pw.Downloaded) / 1024 / 1024 / time.Since(pw.StartTime).Seconds()
 	log.Printf("Download completed: %s | Speed: %.2f MB/s", finalFilePath, speed)
-	return finalFilePath, nil
+	return finalFilePath, totalBytes, nil
 }
 
 func downloadSnapshot(rpcAddress string, config Config, snapshotType string, referenceSlot int) error {
@@ -400,13 +490,20 @@ func downloadSnapshot(rpcAddress string, config Config, snapshotType string, ref
 	start := time.Now() // Start time for download
 
 	// Download and handle the snapshot
-	finalPath, err := writeSnapshotToFile(snapshotURL, tmpDir, config.SnapshotPath)
+	finalPath, sizeBytes, err := writeSnapshotToFile(snapshotURL, tmpDir, config.SnapshotPath)
 	if err != nil {
 		return fmt.Errorf("failed to download %s snapshot: %v", snapshotType, err)
 	}
 
-	duration := time.Since(start) // End time for download
-	log.Printf("%s snapshot downloaded and saved to: %s | Time: %s", snapshotType, finalPath, duration)
+	// Calculate duration and format it
+	duration := time.Since(start)
+	seconds := int(duration.Seconds())
+	if seconds < 60 {
+		log.Printf("%s snapshot downloaded and saved to: %s | Time: %d seconds | Size: %.2f MB", snapshotType, finalPath, seconds, float64(sizeBytes)/(1024*1024))
+	} else {
+		log.Printf("%s snapshot downloaded and saved to: %s | Time: %d minutes, %d seconds | Size: %.2f MB",
+			snapshotType, finalPath, seconds/60, seconds%60, float64(sizeBytes)/(1024*1024))
+	}
 	return nil
 }
 
@@ -534,6 +631,40 @@ func findHighestIncrementalSnapshot(destDir string, baseSlot int) (IncrementalSn
 	return highestSnapshot, nil
 }
 
+func isGenesisPresent(snapshotPath string) bool {
+	genesisPath := filepath.Join(snapshotPath, "genesis.tar.bz2")
+	if _, err := os.Stat(genesisPath); err == nil {
+		return true
+	}
+	return false
+}
+
+func downloadGenesis(rpcAddress, snapshotPath string) error {
+	// Define the TMP directory
+	tmpDir := filepath.Join(snapshotPath, "tmp")
+	err := os.MkdirAll(tmpDir, os.ModePerm)
+	if err != nil {
+		return fmt.Errorf("failed to create TMP directory: %v", err)
+	}
+
+	// Clean TMP directory
+	err = cleanTmpDir(tmpDir)
+	if err != nil {
+		return fmt.Errorf("failed to clean TMP directory: %v", err)
+	}
+
+	// Construct the genesis URL
+	genesisURL := fmt.Sprintf("%s/genesis.tar.bz2", rpcAddress)
+
+	// Download and handle the genesis snapshot
+	_, _, err = writeSnapshotToFile(genesisURL, tmpDir, snapshotPath)
+	if err != nil {
+		return fmt.Errorf("failed to download genesis snapshot: %v", err)
+	}
+
+	return nil
+}
+
 func processSnapshots(config Config) {
 	for attempt := 1; attempt <= config.NumOfRetries; attempt++ {
 		log.Printf("Attempt %d/%d to manage snapshots...", attempt, config.NumOfRetries)
@@ -551,6 +682,12 @@ func processSnapshots(config Config) {
 		// Manage snapshots
 		fullNeeded, incrementalNeeded := manageSnapshots(config, referenceSlot)
 
+		// Check if genesis snapshot is needed
+		genesisNeeded := !isGenesisPresent(config.SnapshotPath)
+		if genesisNeeded {
+			log.Println("Genesis file is missing.")
+		}
+
 		// If no snapshots are needed, exit the loop
 		if !fullNeeded && !incrementalNeeded {
 			log.Println("All snapshots are up to date. No downloads required.")
@@ -565,11 +702,22 @@ func processSnapshots(config Config) {
 
 		// Summarize results and select the best RPC node
 		summarizeResultsWithVersions(results)
+		dumpGoodAndSlowNodesToFile(results, config.SnapshotPath + "/nodes.json")
 		bestRPC := selectBestRPC(results)
 
 		// Download snapshots as required
 		if bestRPC != "" {
 			start := time.Now()
+
+			if genesisNeeded {
+				log.Println("Downloading genesis snapshot...")
+				err := downloadGenesis(bestRPC, config.SnapshotPath)
+				if err != nil {
+					log.Printf("Failed to download genesis snapshot: %v", err)
+					continue
+				}
+				log.Println("Genesis snapshot downloaded successfully.")
+			}
 
 			if fullNeeded {
 				downloadSnapshot(bestRPC, config, "full", referenceSlot)

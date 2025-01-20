@@ -152,7 +152,6 @@ func getReferenceSlot(rpcAddress string) (int, error) {
 	return result.Result, nil
 }
 
-
 // Fetches RPC nodes
 func fetchRPCNodes(config Config) []RPCNode {
 	var nodes []RPCNode
@@ -188,15 +187,39 @@ func selectBestRPC(results []struct {
 	version string
 	status  string
 }) string {
-	var bestRPC string
-	var bestSpeed float64
+	var bestGoodNode struct {
+		rpc   string
+		speed float64
+	}
+	var bestSlowNode struct {
+		rpc   string
+		speed float64
+	}
 
 	for _, result := range results {
-		if result.status == "good" && result.speed > bestSpeed {
-			bestSpeed = result.speed
-			bestRPC = result.rpc
+		if result.status == "good" && result.speed > bestGoodNode.speed {
+			bestGoodNode = struct {
+				rpc   string
+				speed float64
+			}{rpc: result.rpc, speed: result.speed}
+		}
+		if result.status == "slow" && result.speed > bestSlowNode.speed {
+			bestSlowNode = struct {
+				rpc   string
+				speed float64
+			}{rpc: result.rpc, speed: result.speed}
 		}
 	}
 
-	return bestRPC
+	// Prioritize good nodes; fallback to the fastest slow node if no good nodes are available
+	if bestGoodNode.rpc != "" {
+		return bestGoodNode.rpc
+	}
+	if bestSlowNode.rpc != "" {
+		log.Printf("No good nodes found. Falling back to the fastest slow node: %s with speed %.2f MB/s", bestSlowNode.rpc, bestSlowNode.speed)
+		return bestSlowNode.rpc
+	}
+
+	log.Println("No suitable RPC nodes found.")
+	return ""
 }
