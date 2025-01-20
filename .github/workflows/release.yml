@@ -17,7 +17,7 @@ jobs:
 
     - name: Build binary
       run: |
-        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o solana-snapshot-finder
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-X main.version=$(git describe --tags --abbrev=0)"-o solana-snapshot-finder
     - name: Archive binary
       run: |
         echo "Listing files before archiving:"
