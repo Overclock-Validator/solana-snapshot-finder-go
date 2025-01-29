@@ -407,7 +407,7 @@ func cleanTmpDir(tmpDir string) error {
 	return nil
 }
 
-func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string) (string, int64, error) {
+func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (string, int64, error) {
 	// Ensure the temporary directory exists
 	err := os.MkdirAll(tmpDir, os.ModePerm)
 	if err != nil {
@@ -430,7 +430,20 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string) (string, int64, er
 
 	// Define paths for temporary and final files
 	tmpFilePath := filepath.Join(tmpDir, "tmp-"+fileName)
-	finalFilePath := filepath.Join(baseDir, fileName)
+	remoteFilePath := filepath.Join(baseDir, "remote")
+	// Ensure the remote directory exists
+	err = os.MkdirAll(remoteFilePath, os.ModePerm)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to create remote directory %s: %v", remoteFilePath, err)
+	}
+
+	var finalFilePath string
+
+	if genesis {
+		finalFilePath = filepath.Join(baseDir, fileName)
+	} else {
+		finalFilePath = filepath.Join(remoteFilePath, fileName)
+	}
 
 	// Create a temporary file for download
 	tmpFile, err := os.Create(tmpFilePath)
@@ -490,7 +503,7 @@ func downloadSnapshot(rpcAddress string, config Config, snapshotType string, ref
 	start := time.Now() // Start time for download
 
 	// Download and handle the snapshot
-	finalPath, sizeBytes, err := writeSnapshotToFile(snapshotURL, tmpDir, config.SnapshotPath)
+	finalPath, sizeBytes, err := writeSnapshotToFile(snapshotURL, tmpDir, config.SnapshotPath, false)
 	if err != nil {
 		return fmt.Errorf("failed to download %s snapshot: %v", snapshotType, err)
 	}
@@ -542,25 +555,29 @@ func ExtractIncrementalSnapshotSlots(fileName string) (int, int, error) {
 	return slotStart, slotEnd, nil
 }
 
-func findRecentFullSnapshot(destDir string, referenceSlot, threshold int) (string, int, error) {
-	// List files in the base directory
-	files, err := ioutil.ReadDir(destDir)
+func findSnapshotFiles(dir string, referenceSlot, threshold int, isFullSnapshot bool) ([]string, error) {
+	// List files in the directory
+	files, err := ioutil.ReadDir(dir)
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to list files in %s: %v", destDir, err)
+		return nil, fmt.Errorf("failed to list files in %s: %v", dir, err)
 	}
 
-	var mostRecent string
-	var mostRecentSlot int
-
+	var snapshotFiles []string
 	for _, file := range files {
 		if file.IsDir() {
 			continue
 		}
 
-		filePath := filepath.Join(destDir, file.Name())
+		filePath := filepath.Join(dir, file.Name())
 
-		// Extract the slot from the full snapshot file name
-		slot, err := ExtractFullSnapshotSlot(filePath)
+		var slot int
+		var err error
+		if isFullSnapshot {
+			slot, err = ExtractFullSnapshotSlot(filePath)
+		} else {
+			_, slot, err = ExtractIncrementalSnapshotSlots(filePath)
+		}
+
 		if err != nil {
 			log.Printf("Skipping file %s: %v", file.Name(), err)
 			continue
@@ -573,7 +590,41 @@ func findRecentFullSnapshot(destDir string, referenceSlot, threshold int) (strin
 			continue
 		}
 
-		// Update the most recent snapshot
+		// Add file if it meets the criteria
+		snapshotFiles = append(snapshotFiles, filePath)
+	}
+
+	return snapshotFiles, nil
+}
+
+// Find recent full snapshot across both directories (destDir and destDir/remote).
+func findRecentFullSnapshot(destDir string, referenceSlot, threshold int) (string, int, error) {
+	// Find full snapshots in both destDir and remote directory
+	fullSnapshotsDest, err := findSnapshotFiles(destDir, referenceSlot, threshold, true)
+	if err != nil {
+		return "", 0, err
+	}
+
+	remoteDir := filepath.Join(destDir, "remote")
+	fullSnapshotsRemote, err := findSnapshotFiles(remoteDir, referenceSlot, threshold, true)
+	if err != nil {
+		return "", 0, err
+	}
+
+	// Combine snapshots from both directories
+	allSnapshots := append(fullSnapshotsDest, fullSnapshotsRemote...)
+
+	// Check for the most recent snapshot
+	var mostRecent string
+	var mostRecentSlot int
+
+	for _, filePath := range allSnapshots {
+		slot, err := ExtractFullSnapshotSlot(filePath)
+		if err != nil {
+			log.Printf("Skipping file %s: %v", filePath, err)
+			continue
+		}
+
 		if slot > mostRecentSlot {
 			mostRecent = filePath
 			mostRecentSlot = slot
@@ -588,22 +639,27 @@ func findRecentFullSnapshot(destDir string, referenceSlot, threshold int) (strin
 	return mostRecent, mostRecentSlot, nil
 }
 
+// Find highest incremental snapshot across both directories (destDir and destDir/remote).
 func findHighestIncrementalSnapshot(destDir string, baseSlot int) (IncrementalSnapshot, error) {
-	// List files in the base directory
-	files, err := ioutil.ReadDir(destDir)
+	// Find incremental snapshots in both destDir and remote directory
+	incrementalSnapshotsDest, err := findSnapshotFiles(destDir, baseSlot, 0, false)
 	if err != nil {
-		return IncrementalSnapshot{}, fmt.Errorf("failed to list files in %s: %v", destDir, err)
+		return IncrementalSnapshot{}, err
 	}
+
+	remoteDir := filepath.Join(destDir, "remote")
+	incrementalSnapshotsRemote, err := findSnapshotFiles(remoteDir, baseSlot, 0, false)
+	if err != nil {
+		return IncrementalSnapshot{}, err
+	}
+
+	// Combine snapshots from both directories
+	allSnapshots := append(incrementalSnapshotsDest, incrementalSnapshotsRemote...)
 
 	var highestSnapshot IncrementalSnapshot
 	var highestSlotEnd int
 
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		filePath := filepath.Join(destDir, file.Name())
+	for _, filePath := range allSnapshots {
 		startSlot, endSlot, err := ExtractIncrementalSnapshotSlots(filePath)
 		if err != nil {
 			continue // Skip invalid or non-incremental snapshot files
@@ -628,6 +684,7 @@ func findHighestIncrementalSnapshot(destDir string, baseSlot int) (IncrementalSn
 	if highestSlotEnd == 0 {
 		return IncrementalSnapshot{}, fmt.Errorf("no valid incremental snapshots found starting at slot %d", baseSlot)
 	}
+
 	return highestSnapshot, nil
 }
 
@@ -657,7 +714,7 @@ func downloadGenesis(rpcAddress, snapshotPath string) error {
 	genesisURL := fmt.Sprintf("%s/genesis.tar.bz2", rpcAddress)
 
 	// Download and handle the genesis snapshot
-	_, _, err = writeSnapshotToFile(genesisURL, tmpDir, snapshotPath)
+	_, _, err = writeSnapshotToFile(genesisURL, tmpDir, snapshotPath, true)
 	if err != nil {
 		return fmt.Errorf("failed to download genesis snapshot: %v", err)
 	}
@@ -702,7 +759,7 @@ func processSnapshots(config Config) {
 
 		// Summarize results and select the best RPC node
 		summarizeResultsWithVersions(results)
-		dumpGoodAndSlowNodesToFile(results, config.SnapshotPath + "/nodes.json")
+		dumpGoodAndSlowNodesToFile(results, config.SnapshotPath+"/nodes.json")
 		bestRPC := selectBestRPC(results)
 
 		// Download snapshots as required
