@@ -1,14 +1,17 @@
-package main
+package snapshot
 
 import (
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/maestroi/solana-snapshot-finder-go/pkg/config"
 )
 
 // IncrementalSnapshot represents an incremental snapshot with its slots.
@@ -158,7 +161,7 @@ func findHighestIncrementalSnapshot(destDir string, baseSlot int) (IncrementalSn
 	return highestSnapshot, nil
 }
 
-func isGenesisPresent(snapshotPath string) bool {
+func IsGenesisPresent(snapshotPath string) bool {
 	genesisPath := filepath.Join(snapshotPath, "genesis.tar.bz2")
 	if _, err := os.Stat(genesisPath); err == nil {
 		return true
@@ -191,10 +194,10 @@ func copyFile(src, dst string) error {
 	return nil
 }
 
-func manageSnapshots(config Config, referenceSlot int) (bool, bool) {
+func ManageSnapshots(cfg config.Config, referenceSlot int) (bool, bool) {
 	log.Println("Checking snapshots...")
 
-	fullSnapshot, fullSlot, err := findRecentFullSnapshot(config.SnapshotPath, referenceSlot, 0)
+	fullSnapshot, fullSlot, err := findRecentFullSnapshot(cfg.SnapshotPath, referenceSlot, 0)
 	if err != nil {
 		log.Printf("No full snapshots found: %v", err)
 		return true, true
@@ -202,14 +205,14 @@ func manageSnapshots(config Config, referenceSlot int) (bool, bool) {
 
 	fullDiff := referenceSlot - fullSlot
 	log.Printf("Full snapshot found: %s (Slot: %d, Diff: %d, Threshold: %d)",
-		fullSnapshot, fullSlot, fullDiff, config.FullThreshold)
+		fullSnapshot, fullSlot, fullDiff, cfg.FullThreshold)
 
-	if fullDiff > config.FullThreshold {
-		log.Printf("Full snapshot is outdated. Diff (%d) exceeds threshold (%d)", fullDiff, config.FullThreshold)
+	if fullDiff > cfg.FullThreshold {
+		log.Printf("Full snapshot is outdated. Diff (%d) exceeds threshold (%d)", fullDiff, cfg.FullThreshold)
 		return true, true
 	}
 
-	incrementalSnapshot, err := findHighestIncrementalSnapshot(config.SnapshotPath, fullSlot)
+	incrementalSnapshot, err := findHighestIncrementalSnapshot(cfg.SnapshotPath, fullSlot)
 	if err != nil {
 		log.Printf("No valid incremental snapshots found: %v", err)
 		return false, true
@@ -218,14 +221,33 @@ func manageSnapshots(config Config, referenceSlot int) (bool, bool) {
 	incrementalDiff := referenceSlot - incrementalSnapshot.SlotEnd
 	log.Printf("Incremental snapshot found: %s (SlotStart: %d, SlotEnd: %d, Diff: %d, Threshold: %d)",
 		incrementalSnapshot.FileName, incrementalSnapshot.SlotStart, incrementalSnapshot.SlotEnd,
-		incrementalDiff, config.IncrementalThreshold)
+		incrementalDiff, cfg.IncrementalThreshold)
 
-	if incrementalDiff > config.IncrementalThreshold {
+	if incrementalDiff > cfg.IncrementalThreshold {
 		log.Printf("Incremental snapshot is outdated. Diff (%d) exceeds threshold (%d)",
-			incrementalDiff, config.IncrementalThreshold)
+			incrementalDiff, cfg.IncrementalThreshold)
 		return false, true
 	}
 
 	log.Println("All snapshots are within thresholds")
 	return false, false
+}
+
+func UntarGenesis(snapshotPath string) error {
+	genesisPath := filepath.Join(snapshotPath, "genesis.tar.bz2")
+	if _, err := os.Stat(genesisPath); err != nil {
+		return fmt.Errorf("genesis file not found: %v", err)
+	}
+
+	log.Printf("Untarring genesis file: %s", genesisPath)
+
+	// Create a command to decompress and untar
+	cmd := exec.Command("tar", "-xjf", genesisPath, "-C", snapshotPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to untar genesis file: %v, output: %s", err, string(output))
+	}
+
+	log.Printf("Successfully untarred genesis file to: %s", snapshotPath)
+	return nil
 }

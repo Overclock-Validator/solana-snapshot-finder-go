@@ -1,4 +1,4 @@
-package main
+package rpc
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/maestroi/solana-snapshot-finder-go/pkg/config"
 )
 
 var DEFAULT_HEADERS = map[string]string{
@@ -109,7 +111,7 @@ func GetRPCNodes(rpcAddress string, retries int, blacklist []string, privateRPC 
 	return nodes, addresses, nil
 }
 
-func getReferenceSlot(rpcAddress string) (int, error) {
+func GetReferenceSlot(rpcAddress string) (int, error) {
 	payload := map[string]interface{}{
 		"id":      1,
 		"jsonrpc": "2.0",
@@ -152,26 +154,26 @@ func getReferenceSlot(rpcAddress string) (int, error) {
 	return result.Result, nil
 }
 
-// Fetches RPC nodes
-func fetchRPCNodes(config Config) []RPCNode {
+// FetchRPCNodes fetches RPC nodes
+func FetchRPCNodes(cfg config.Config) []RPCNode {
 	var nodes []RPCNode
 	var err error
 
-	for attempt := 1; attempt <= config.NumOfRetries; attempt++ {
-		nodes, _, err = GetRPCNodes(config.RPCAddress, config.NumOfRetries, config.Blacklist, config.PrivateRPC)
+	for attempt := 1; attempt <= cfg.NumOfRetries; attempt++ {
+		nodes, _, err = GetRPCNodes(cfg.RPCAddress, cfg.NumOfRetries, cfg.Blacklist, cfg.PrivateRPC)
 		if err == nil && len(nodes) > 0 {
 			log.Printf("Fetched %d RPC nodes on attempt %d.", len(nodes), attempt)
 			return nodes
 		}
 
-		log.Printf("Attempt %d/%d to fetch RPC nodes failed: %v", attempt, config.NumOfRetries, err)
+		log.Printf("Attempt %d/%d to fetch RPC nodes failed: %v", attempt, cfg.NumOfRetries, err)
 		time.Sleep(2 * time.Second) // Add delay between retries
 	}
 
 	if err != nil {
-		log.Fatalf("Failed to fetch RPC nodes after %d retries: %v", config.NumOfRetries, err)
+		log.Fatalf("Failed to fetch RPC nodes after %d retries: %v", cfg.NumOfRetries, err)
 	} else if len(nodes) == 0 {
-		log.Fatalf("No RPC nodes found after %d retries.", config.NumOfRetries)
+		log.Fatalf("No RPC nodes found after %d retries.", cfg.NumOfRetries)
 	}
 
 	return nil // Should not reach here

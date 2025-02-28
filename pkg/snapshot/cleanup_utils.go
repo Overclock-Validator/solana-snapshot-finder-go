@@ -1,4 +1,4 @@
-package main
+package snapshot
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func cleanupOldSnapshots(snapshotPath string, referenceSlot, fullThreshold, incrementalThreshold int) error {
+func CleanupOldSnapshots(snapshotPath string, referenceSlot, fullThreshold, incrementalThreshold int) error {
 	log.Println("Cleaning up old snapshots...")
 
 	directories := []string{snapshotPath, filepath.Join(snapshotPath, "remote")}

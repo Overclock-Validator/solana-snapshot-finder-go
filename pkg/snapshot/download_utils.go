@@ -1,4 +1,4 @@
-package main
+package snapshot
 
 import (
 	"fmt"
@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/maestroi/solana-snapshot-finder-go/pkg/config"
 )
 
 type ProgressWriter struct {
@@ -50,7 +52,7 @@ func (pw *ProgressWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-func downloadGenesis(rpcAddress, snapshotPath string) error {
+func DownloadGenesis(rpcAddress, snapshotPath string) error {
 	tmpDir := filepath.Join(snapshotPath, "tmp")
 	if err := os.MkdirAll(tmpDir, os.ModePerm); err != nil {
 		return fmt.Errorf("failed to create TMP directory: %v", err)
@@ -195,19 +197,19 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 	return finalFilePath, totalBytes, nil
 }
 
-func downloadSnapshot(rpcAddress string, config Config, snapshotType string, referenceSlot int) error {
+func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string, referenceSlot int) error {
 	log.Printf("Downloading %s snapshot from %s", snapshotType, rpcAddress)
 
 	start := time.Now()
 
 	// Define the TMP directory
-	tmpDir := filepath.Join(config.SnapshotPath, "tmp")
+	tmpDir := filepath.Join(cfg.SnapshotPath, "tmp")
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
 		return fmt.Errorf("failed to create TMP directory: %v", err)
 	}
 
 	// Ensure remote directory exists with proper permissions
-	remoteDir := filepath.Join(config.SnapshotPath, "remote")
+	remoteDir := filepath.Join(cfg.SnapshotPath, "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
 		return fmt.Errorf("failed to create remote directory: %v", err)
 	}
@@ -242,7 +244,7 @@ func downloadSnapshot(rpcAddress string, config Config, snapshotType string, ref
 			continue
 		}
 
-		finalPath, sizeBytes, downloadErr = writeSnapshotToFile(snapshotURL, tmpDir, config.SnapshotPath, false)
+		finalPath, sizeBytes, downloadErr = writeSnapshotToFile(snapshotURL, tmpDir, cfg.SnapshotPath, false)
 		if downloadErr == nil {
 			log.Printf("Successfully downloaded snapshot to: %s", finalPath)
 			break
@@ -278,7 +280,7 @@ func downloadSnapshot(rpcAddress string, config Config, snapshotType string, ref
 			return nil
 		}
 
-		if downloadedSlot < referenceSlot-config.FullThreshold {
+		if downloadedSlot < referenceSlot-cfg.FullThreshold {
 			log.Printf("Warning: Downloaded snapshot might be old, but keeping it anyway")
 		}
 	} else {
@@ -288,11 +290,11 @@ func downloadSnapshot(rpcAddress string, config Config, snapshotType string, ref
 			return nil
 		}
 
-		if referenceSlot-slotEnd > config.IncrementalThreshold {
+		if referenceSlot-slotEnd > cfg.IncrementalThreshold {
 			log.Printf("Warning: Incremental snapshot might be old, but keeping it anyway")
 		}
 
-		_, fullSlot, err := findRecentFullSnapshot(config.SnapshotPath, referenceSlot, 0)
+		_, fullSlot, err := findRecentFullSnapshot(cfg.SnapshotPath, referenceSlot, 0)
 		if err != nil {
 			log.Printf("Warning: Could not find full snapshot: %v", err)
 			return nil
