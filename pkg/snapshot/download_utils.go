@@ -215,6 +215,17 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 	}
 	log.Printf("Ensured remote directory exists: %s", remoteDir)
 
+	// Get existing snapshot slot if it exists
+	var existingSlot int
+	var existingSnapshotPath string
+	if strings.HasPrefix(snapshotType, "snapshot-") {
+		var err error
+		existingSnapshotPath, existingSlot, err = findRecentFullSnapshot(cfg.SnapshotPath, referenceSlot, 0)
+		if err == nil {
+			log.Printf("Found existing full snapshot: %s (Slot: %d)", existingSnapshotPath, existingSlot)
+		}
+	}
+
 	// Try both .tar.bz2 and .tar.zst extensions
 	var finalPath string
 	var sizeBytes int64
@@ -230,20 +241,57 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 		}
 		log.Printf("Trying URL: %s", snapshotURL)
 
-		// Make a HEAD request first
-		client := &http.Client{Timeout: 10 * time.Second}
+		// Make a HEAD request first to get information about the snapshot
+		client := &http.Client{
+			Timeout: 10 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return nil // Allow redirects
+			},
+		}
 		resp, err := client.Head(snapshotURL)
 		if err != nil {
 			log.Printf("HEAD request failed for %s: %v", snapshotURL, err)
 			continue
 		}
-		resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			log.Printf("HEAD request returned status %d for %s", resp.StatusCode, snapshotURL)
+			resp.Body.Close()
 			continue
 		}
 
+		// Try to get filename from the Content-Disposition header or final URL
+		fileName := filepath.Base(resp.Request.URL.String())
+		if contentDisposition := resp.Header.Get("Content-Disposition"); contentDisposition != "" {
+			parts := strings.Split(contentDisposition, "filename=")
+			if len(parts) > 1 {
+				fileName = strings.Trim(parts[1], `"' `)
+				log.Printf("Filename from Content-Disposition: %s", fileName)
+			}
+		}
+		log.Printf("Remote snapshot filename: %s", fileName)
+		resp.Body.Close()
+
+		// Extract slot from the filename
+		var remoteSlot int
+		if strings.HasPrefix(snapshotType, "snapshot-") {
+			var err error
+			remoteSlot, err = ExtractFullSnapshotSlot(fileName)
+			if err != nil {
+				log.Printf("Warning: Could not extract slot from filename %s: %v", fileName, err)
+				continue
+			}
+			log.Printf("Remote snapshot slot: %d", remoteSlot)
+
+			// Compare with existing slot and skip download if not newer
+			if existingSlot > 0 && remoteSlot <= existingSlot {
+				log.Printf("Remote snapshot (slot %d) is not newer than existing snapshot (slot %d). Skipping download.",
+					remoteSlot, existingSlot)
+				return nil
+			}
+		}
+
+		// Proceed with the download since we've confirmed it's a newer snapshot
 		finalPath, sizeBytes, downloadErr = writeSnapshotToFile(snapshotURL, tmpDir, cfg.SnapshotPath, false)
 		if downloadErr == nil {
 			log.Printf("Successfully downloaded snapshot to: %s", finalPath)
@@ -273,10 +321,21 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 	log.Printf("Verified snapshot exists at: %s", finalPath)
 
 	// Verify the downloaded snapshot without removing files
-	if snapshotType == "full" {
+	if strings.HasPrefix(snapshotType, "snapshot-") {
 		downloadedSlot, err := ExtractFullSnapshotSlot(finalPath)
 		if err != nil {
 			log.Printf("Warning: Failed to extract slot from downloaded snapshot: %v", err)
+			return nil
+		}
+
+		// Double-check that downloaded slot matches what we expected
+		if existingSlot > 0 && downloadedSlot <= existingSlot {
+			log.Printf("Warning: Downloaded snapshot (slot %d) is not newer than existing snapshot (slot %d). Removing redundant download.",
+				downloadedSlot, existingSlot)
+			// Remove the downloaded file since it's not newer
+			if err := os.Remove(finalPath); err != nil {
+				log.Printf("Warning: Failed to remove redundant downloaded snapshot: %v", err)
+			}
 			return nil
 		}
 
