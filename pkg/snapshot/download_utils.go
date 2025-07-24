@@ -197,23 +197,23 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 	return finalFilePath, totalBytes, nil
 }
 
-func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string, referenceSlot int) error {
-	log.Printf("Downloading %s snapshot from %s", snapshotType, rpcAddress)
+func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string, referenceSlot int) (string, error) {
+	//log.Printf("Downloading %s snapshot from %s", snapshotType, rpcAddress)
 
 	start := time.Now()
 
 	// Define the TMP directory
 	tmpDir := filepath.Join(cfg.SnapshotPath, "tmp")
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
-		return fmt.Errorf("failed to create TMP directory: %v", err)
+		return "", fmt.Errorf("failed to create TMP directory: %v", err)
 	}
 
 	// Ensure remote directory exists with proper permissions
 	remoteDir := filepath.Join(cfg.SnapshotPath, "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
-		return fmt.Errorf("failed to create remote directory: %v", err)
+		return "", fmt.Errorf("failed to create remote directory: %v", err)
 	}
-	log.Printf("Ensured remote directory exists: %s", remoteDir)
+	//log.Printf("Ensured remote directory exists: %s", remoteDir)
 
 	// Get existing snapshot slot if it exists
 	var existingSlot int
@@ -287,7 +287,7 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 			if existingSlot > 0 && remoteSlot <= existingSlot {
 				log.Printf("Remote snapshot (slot %d) is not newer than existing snapshot (slot %d). Skipping download.",
 					remoteSlot, existingSlot)
-				return nil
+				return "", nil
 			}
 		}
 
@@ -301,7 +301,7 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 	}
 
 	if downloadErr != nil {
-		return fmt.Errorf("failed to download snapshot with any extension: %v", downloadErr)
+		return "", fmt.Errorf("failed to download snapshot with any extension: %v", downloadErr)
 	}
 
 	// Verify the file exists in the remote directory
@@ -311,21 +311,21 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 		if _, backupErr := os.Stat(backupFile); backupErr == nil {
 			log.Printf("Attempting to restore from backup: %s", backupFile)
 			if err := copyFile(backupFile, finalPath); err != nil {
-				return fmt.Errorf("failed to restore from backup: %v", err)
+				return "", fmt.Errorf("failed to restore from backup: %v", err)
 			}
 			log.Printf("Successfully restored from backup to: %s", finalPath)
 		} else {
-			return fmt.Errorf("snapshot file not found and no backup available: %v", err)
+			return "", fmt.Errorf("snapshot file not found and no backup available: %v", err)
 		}
 	}
-	log.Printf("Verified snapshot exists at: %s", finalPath)
+	//log.Printf("Verified snapshot exists at: %s", finalPath)
 
 	// Verify the downloaded snapshot without removing files
 	if strings.HasPrefix(snapshotType, "snapshot-") {
 		downloadedSlot, err := ExtractFullSnapshotSlot(finalPath)
 		if err != nil {
 			log.Printf("Warning: Failed to extract slot from downloaded snapshot: %v", err)
-			return nil
+			return "", nil
 		}
 
 		// Double-check that downloaded slot matches what we expected
@@ -336,7 +336,7 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 			if err := os.Remove(finalPath); err != nil {
 				log.Printf("Warning: Failed to remove redundant downloaded snapshot: %v", err)
 			}
-			return nil
+			return "", nil
 		}
 
 		if downloadedSlot < referenceSlot-cfg.FullThreshold {
@@ -346,7 +346,7 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 		slotStart, slotEnd, err := ExtractIncrementalSnapshotSlots(finalPath)
 		if err != nil {
 			log.Printf("Warning: Failed to extract slots from incremental snapshot: %v", err)
-			return nil
+			return "", nil
 		}
 
 		if referenceSlot-slotEnd > cfg.IncrementalThreshold {
@@ -356,7 +356,7 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 		_, fullSlot, err := findRecentFullSnapshot(cfg.SnapshotPath, referenceSlot, 0)
 		if err != nil {
 			log.Printf("Warning: Could not find full snapshot: %v", err)
-			return nil
+			return "", nil
 		}
 
 		if slotStart != fullSlot {
@@ -374,5 +374,5 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 			snapshotType, finalPath, seconds/60, seconds%60, float64(sizeBytes)/(1024*1024))
 	}
 
-	return nil
+	return finalPath, nil
 }

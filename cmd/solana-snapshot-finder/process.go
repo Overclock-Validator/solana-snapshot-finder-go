@@ -84,7 +84,7 @@ func processSnapshots(cfg config.Config) {
 	// Download full snapshot if needed
 	if needFull {
 		log.Println("Downloading full snapshot...")
-		if err := snapshot.DownloadSnapshot(bestRPC, cfg, "snapshot-", referenceSlot); err != nil {
+		if _, err := snapshot.DownloadSnapshot(bestRPC, cfg, "snapshot-", referenceSlot); err != nil {
 			log.Fatalf("Failed to download full snapshot: %v", err)
 		}
 		log.Println("Full snapshot downloaded successfully")
@@ -93,7 +93,7 @@ func processSnapshots(cfg config.Config) {
 	// Download incremental snapshot if needed
 	if needIncremental {
 		log.Println("Downloading incremental snapshot...")
-		if err := snapshot.DownloadSnapshot(bestRPC, cfg, "incremental-", referenceSlot); err != nil {
+		if _, err := snapshot.DownloadSnapshot(bestRPC, cfg, "incremental-", referenceSlot); err != nil {
 			log.Fatalf("Failed to download incremental snapshot: %v", err)
 		}
 		log.Println("Incremental snapshot downloaded successfully")
