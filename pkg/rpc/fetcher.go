@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/maestroi/solana-snapshot-finder-go/pkg/config"
+	"github.com/Overclock-Validator/solana-snapshot-finder-go/pkg/config"
 )
 
 var DEFAULT_HEADERS = map[string]string{

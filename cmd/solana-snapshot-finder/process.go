@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/maestroi/solana-snapshot-finder-go/pkg/config"
-	"github.com/maestroi/solana-snapshot-finder-go/pkg/rpc"
-	"github.com/maestroi/solana-snapshot-finder-go/pkg/snapshot"
+	"github.com/Overclock-Validator/solana-snapshot-finder-go/pkg/config"
+	"github.com/Overclock-Validator/solana-snapshot-finder-go/pkg/rpc"
+	"github.com/Overclock-Validator/solana-snapshot-finder-go/pkg/snapshot"
 )
 
 // processSnapshots manages the snapshot download process

@@ -1,4 +1,4 @@
-module github.com/maestroi/solana-snapshot-finder-go
+module github.com/Overclock-Validator/solana-snapshot-finder-go
 
 go 1.23.4
 

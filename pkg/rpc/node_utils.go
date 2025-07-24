@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/maestroi/solana-snapshot-finder-go/pkg/config"
+	"github.com/Overclock-Validator/solana-snapshot-finder-go/pkg/config"
 )
 
 func MeasureSpeed(url string, measureTime int) (float64, float64, error) {

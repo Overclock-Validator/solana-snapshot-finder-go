@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/maestroi/solana-snapshot-finder-go/pkg/config"
+	"github.com/Overclock-Validator/solana-snapshot-finder-go/pkg/config"
 )
 
 var version string
