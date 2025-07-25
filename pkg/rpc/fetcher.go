@@ -162,11 +162,11 @@ func FetchRPCNodes(cfg config.Config) []RPCNode {
 	for attempt := 1; attempt <= cfg.NumOfRetries; attempt++ {
 		nodes, _, err = GetRPCNodes(cfg.RPCAddress, cfg.NumOfRetries, cfg.Blacklist, cfg.PrivateRPC)
 		if err == nil && len(nodes) > 0 {
-			log.Printf("Fetched %d RPC nodes on attempt %d.", len(nodes), attempt)
+			//log.Printf("Fetched %d RPC nodes on attempt %d.", len(nodes), attempt)
 			return nodes
 		}
 
-		log.Printf("Attempt %d/%d to fetch RPC nodes failed: %v", attempt, cfg.NumOfRetries, err)
+		//log.Printf("Attempt %d/%d to fetch RPC nodes failed: %v", attempt, cfg.NumOfRetries, err)
 		time.Sleep(2 * time.Second) // Add delay between retries
 	}
 

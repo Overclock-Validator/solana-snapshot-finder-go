@@ -241,11 +241,11 @@ func EvaluateNodesWithVersions(nodes []RPCNode, cfg config.Config, defaultSlot i
 		return evaluatedResults[i].speed > evaluatedResults[j].speed
 	})
 
-	log.Printf("Node evaluation complete: %d/%d nodes processed | Good: %d, Slow: %d, Bad: %d",
-		atomic.LoadInt32(&processedNodes), len(nodes),
-		atomic.LoadInt32(&goodNodes),
-		atomic.LoadInt32(&slowNodes),
-		atomic.LoadInt32(&badNodes))
+	/*log.Printf("Node evaluation complete: %d/%d nodes processed | Good: %d, Slow: %d, Bad: %d",
+	atomic.LoadInt32(&processedNodes), len(nodes),
+	atomic.LoadInt32(&goodNodes),
+	atomic.LoadInt32(&slowNodes),
+	atomic.LoadInt32(&badNodes))*/
 
 	return evaluatedResults
 }
@@ -259,7 +259,7 @@ func summarizeResultsWithVersions(results []struct {
 	version string
 	status  string
 }) {
-	totalNodes := len(results)
+	//totalNodes := len(results)
 	goodNodes := 0
 	slowNodes := 0
 	badNodes := 0
@@ -275,16 +275,16 @@ func summarizeResultsWithVersions(results []struct {
 		}
 	}
 
-	log.Printf("Node evaluation complete. Total nodes: %d | Good: %d | Slow: %d | Bad: %d",
-		totalNodes, goodNodes, slowNodes, badNodes)
+	/*log.Printf("Node evaluation complete. Total nodes: %d | Good: %d | Slow: %d | Bad: %d",
+	totalNodes, goodNodes, slowNodes, badNodes)*/
 
-	log.Println("List of good nodes:")
+	/*log.Println("List of good nodes:")
 	for _, result := range results {
 		if result.status == "good" {
 			log.Printf("Node: %s | Speed: %.2f MB/s | Latency: %.2f ms | Slot: %d | Diff: %d | Version: %s",
 				result.rpc, result.speed, result.latency, result.slot, result.diff, result.version)
 		}
-	}
+	}*/
 }
 
 func dumpGoodAndSlowNodesToFile(results []struct {
@@ -465,7 +465,7 @@ func SelectBestRPC(results []struct {
 				speed float64
 			}{rpc: result.rpc, speed: result.speed}
 		}
-		if result.status == "slow" && result.speed > bestSlowNode.speed {
+		if result.status == "slow" && result.speed >= bestSlowNode.speed {
 			bestSlowNode = struct {
 				rpc   string
 				speed float64
@@ -484,4 +484,25 @@ func SelectBestRPC(results []struct {
 
 	log.Println("No suitable RPC nodes found.")
 	return ""
+}
+
+func SortBestRPCs(results []struct {
+	rpc     string
+	speed   float64
+	latency float64
+	slot    int
+	diff    int
+	version string
+	status  string
+}) []string {
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].speed > results[j].speed
+	})
+
+	var rpcs []string
+	for _, result := range results {
+		rpcs = append(rpcs, result.rpc)
+	}
+
+	return rpcs
 }

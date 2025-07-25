@@ -98,7 +98,7 @@ func findRecentFullSnapshot(destDir string, referenceSlot, threshold int) (strin
 		return "", 0, fmt.Errorf("no full snapshots found")
 	}
 
-	log.Printf("Found most recent full snapshot: %s (Slot: %d)", mostRecent, mostRecentSlot)
+	//log.Printf("Found most recent full snapshot: %s (Slot: %d)", mostRecent, mostRecentSlot)
 	return mostRecent, mostRecentSlot, nil
 }
 

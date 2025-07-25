@@ -29,7 +29,7 @@ func (pw *ProgressWriter) Write(p []byte) (int, error) {
 	elapsed := now.Sub(pw.StartTime).Seconds()
 
 	// Log progress every 3 seconds
-	if now.Sub(pw.LastLoggedAt) >= 3*time.Second {
+	if now.Sub(pw.LastLoggedAt) >= 10*time.Second {
 		pw.LastLoggedAt = now
 		speed := float64(pw.Downloaded) / 1024 / 1024 / elapsed // MB/s
 		percentage := (float64(pw.Downloaded) / float64(pw.TotalBytes)) * 100
@@ -46,7 +46,7 @@ func (pw *ProgressWriter) Write(p []byte) (int, error) {
 			timeLeftStr = fmt.Sprintf("%d minutes, %d seconds", minutes, seconds)
 		}
 
-		log.Printf("Download progress: %.2f%% (%.2f MB/s) - Downloaded: %d bytes of %d bytes - Time remaining: %s",
+		log.Printf("snapshot download progress: %.2f%% (%.2f MB/s) - Downloaded: %d bytes of %d bytes - Time remaining: %s",
 			percentage, speed, pw.Downloaded, pw.TotalBytes, timeLeftStr)
 	}
 	return n, nil
@@ -72,7 +72,7 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
 		return "", 0, fmt.Errorf("failed to create temporary directory %s: %v", tmpDir, err)
 	}
-	log.Printf("Created/verified tmp directory: %s", tmpDir)
+	//log.Printf("Created/verified tmp directory: %s", tmpDir)
 
 	// Initiate the download
 	resp, err := http.Get(snapshotURL)
@@ -101,7 +101,7 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 
 	// Define paths for temporary and final files
 	tmpFilePath := filepath.Join(tmpDir, "tmp-"+fileName)
-	log.Printf("Temporary file path: %s", tmpFilePath)
+	//log.Printf("Temporary file path: %s", tmpFilePath)
 
 	var finalFilePath string
 	if genesis {
@@ -111,17 +111,17 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 		if err := os.MkdirAll(remoteFilePath, 0755); err != nil {
 			return "", 0, fmt.Errorf("failed to create remote directory %s: %v", remoteFilePath, err)
 		}
-		log.Printf("Created/verified remote directory: %s", remoteFilePath)
+		//log.Printf("Created/verified remote directory: %s", remoteFilePath)
 		finalFilePath = filepath.Join(remoteFilePath, fileName)
 	}
-	log.Printf("Final file path: %s", finalFilePath)
+	//log.Printf("Final file path: %s", finalFilePath)
 
 	// Create a temporary file for download
 	tmpFile, err := os.Create(tmpFilePath)
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to create temporary file %s: %v", tmpFilePath, err)
 	}
-	log.Printf("Created temporary file: %s", tmpFilePath)
+	//log.Printf("Created temporary file: %s", tmpFilePath)
 
 	// Track download progress
 	pw := &ProgressWriter{
@@ -137,7 +137,7 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 		return "", 0, fmt.Errorf("error during snapshot download: %v", err)
 	}
 	tmpFile.Close()
-	log.Printf("Download completed to temporary file. Size: %d bytes", totalBytes)
+	//log.Printf("Download completed to temporary file. Size: %d bytes", totalBytes)
 
 	// Copy from temporary to final location
 	srcFile, err := os.Open(tmpFilePath)
@@ -156,12 +156,12 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 	defer dstFile.Close()
 
 	// Copy the file contents
-	copiedBytes, err := io.Copy(dstFile, srcFile)
+	_, err = io.Copy(dstFile, srcFile)
 	if err != nil {
 		log.Printf("Error copying file: %v", err)
 		return "", 0, fmt.Errorf("failed to copy file to final location: %v", err)
 	}
-	log.Printf("Copied %d bytes to final location: %s", copiedBytes, finalFilePath)
+	//log.Printf("Copied %d bytes to final location: %s", copiedBytes, finalFilePath)
 
 	// Sync the file to disk
 	if err = dstFile.Sync(); err != nil {
@@ -173,7 +173,7 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 	if err := os.Rename(tmpFilePath, backupPath); err != nil {
 		log.Printf("Warning: Failed to rename temporary file to backup: %v", err)
 	} else {
-		log.Printf("Kept backup file at: %s", backupPath)
+		//log.Printf("Kept backup file at: %s", backupPath)
 	}
 
 	// Verify the final file exists
@@ -189,7 +189,7 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 		}
 		return "", 0, fmt.Errorf("final file does not exist after copy: %v", err)
 	}
-	log.Printf("Verified final file exists: %s", finalFilePath)
+	//log.Printf("Verified final file exists: %s", finalFilePath)
 
 	// Print final progress
 	speed := float64(totalBytes) / 1024 / 1024 / time.Since(pw.StartTime).Seconds()
@@ -198,9 +198,7 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 }
 
 func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string, referenceSlot int) (string, error) {
-	//log.Printf("Downloading %s snapshot from %s", snapshotType, rpcAddress)
-
-	start := time.Now()
+	//start := time.Now()
 
 	// Define the TMP directory
 	tmpDir := filepath.Join(cfg.SnapshotPath, "tmp")
@@ -228,7 +226,7 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 
 	// Try both .tar.bz2 and .tar.zst extensions
 	var finalPath string
-	var sizeBytes int64
+	//var sizeBytes int64
 	var downloadErr error
 
 	extensions := []string{".tar.bz2", ".tar.zst"}
@@ -239,7 +237,7 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 		} else {
 			snapshotURL = fmt.Sprintf("%s/snapshot%s", rpcAddress, ext)
 		}
-		log.Printf("Trying URL: %s", snapshotURL)
+		//log.Printf("Trying URL: %s", snapshotURL)
 
 		// Make a HEAD request first to get information about the snapshot
 		client := &http.Client{
@@ -250,12 +248,12 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 		}
 		resp, err := client.Head(snapshotURL)
 		if err != nil {
-			log.Printf("HEAD request failed for %s: %v", snapshotURL, err)
+			//log.Printf("HEAD request failed for %s: %v", snapshotURL, err)
 			continue
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			log.Printf("HEAD request returned status %d for %s", resp.StatusCode, snapshotURL)
+			//log.Printf("HEAD request returned status %d for %s", resp.StatusCode, snapshotURL)
 			resp.Body.Close()
 			continue
 		}
@@ -269,7 +267,7 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 				log.Printf("Filename from Content-Disposition: %s", fileName)
 			}
 		}
-		log.Printf("Remote snapshot filename: %s", fileName)
+		//log.Printf("Remote snapshot filename: %s", fileName)
 		resp.Body.Close()
 
 		// Extract slot from the filename
@@ -278,26 +276,26 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 			var err error
 			remoteSlot, err = ExtractFullSnapshotSlot(fileName)
 			if err != nil {
-				log.Printf("Warning: Could not extract slot from filename %s: %v", fileName, err)
+				//log.Printf("Warning: Could not extract slot from filename %s: %v", fileName, err)
 				continue
 			}
-			log.Printf("Remote snapshot slot: %d", remoteSlot)
+			//log.Printf("Remote snapshot slot: %d", remoteSlot)
 
 			// Compare with existing slot and skip download if not newer
 			if existingSlot > 0 && remoteSlot <= existingSlot {
-				log.Printf("Remote snapshot (slot %d) is not newer than existing snapshot (slot %d). Skipping download.",
-					remoteSlot, existingSlot)
+				/*log.Printf("Remote snapshot (slot %d) is not newer than existing snapshot (slot %d). Skipping download.",
+				remoteSlot, existingSlot)*/
 				return "", nil
 			}
 		}
 
 		// Proceed with the download since we've confirmed it's a newer snapshot
-		finalPath, sizeBytes, downloadErr = writeSnapshotToFile(snapshotURL, tmpDir, cfg.SnapshotPath, false)
+		finalPath, _, downloadErr = writeSnapshotToFile(snapshotURL, tmpDir, cfg.SnapshotPath, false)
 		if downloadErr == nil {
-			log.Printf("Successfully downloaded snapshot to: %s", finalPath)
+			//log.Printf("Successfully downloaded snapshot to: %s", finalPath)
 			break
 		}
-		log.Printf("Failed to download with %s extension: %v", ext, downloadErr)
+		//log.Printf("Failed to download with %s extension: %v", ext, downloadErr)
 	}
 
 	if downloadErr != nil {
@@ -340,7 +338,7 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 		}
 
 		if downloadedSlot < referenceSlot-cfg.FullThreshold {
-			log.Printf("Warning: Downloaded snapshot might be old, but keeping it anyway")
+			//log.Printf("Warning: Downloaded snapshot might be old, but keeping it anyway")
 		}
 	} else {
 		slotStart, slotEnd, err := ExtractIncrementalSnapshotSlots(finalPath)
@@ -364,7 +362,7 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 		}
 	}
 
-	duration := time.Since(start)
+	/*duration := time.Since(start)
 	seconds := int(duration.Seconds())
 	if seconds < 60 {
 		log.Printf("%s snapshot saved to: %s | Time: %d seconds | Size: %.2f MB",
@@ -372,7 +370,7 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 	} else {
 		log.Printf("%s snapshot saved to: %s | Time: %d minutes, %d seconds | Size: %.2f MB",
 			snapshotType, finalPath, seconds/60, seconds%60, float64(sizeBytes)/(1024*1024))
-	}
+	}*/
 
 	return finalPath, nil
 }
