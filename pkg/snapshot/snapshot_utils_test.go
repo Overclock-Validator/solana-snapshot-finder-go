@@ -11,8 +11,6 @@ import (
 	"github.com/Overclock-Validator/solana-snapshot-finder-go/pkg/config"
 )
 
-
-
 // -----------------------------
 // ExtractFullSnapshotSlot extra tests
 // -----------------------------
@@ -281,7 +279,7 @@ func TestManageSnapshots_NoFullSnapshot(t *testing.T) {
 	}
 
 	needFull, needInc := ManageSnapshots(cfg, 1000)
-	if !(needFull && needInc) {
+	if !needFull || !needInc {
 		t.Fatalf("expected needFull=true needInc=true when no full snapshot (got %v,%v)", needFull, needInc)
 	}
 }
@@ -298,7 +296,7 @@ func TestManageSnapshots_FullOutdated(t *testing.T) {
 	}
 
 	needFull, needInc := ManageSnapshots(cfg, 1000) // referenceSlot much larger
-	if !(needFull && needInc) {
+	if !needFull || !needInc {
 		t.Fatalf("expected both true when full outdated (got %v,%v)", needFull, needInc)
 	}
 }
@@ -316,7 +314,7 @@ func TestManageSnapshots_NoIncrementalFound(t *testing.T) {
 
 	needFull, needInc := ManageSnapshots(cfg, 1005) // referenceSlot close, but no incrementals
 	// When there is no incremental, function returns (false, true)
-	if !(needFull == false && needInc == true) {
+	if needFull == true || needInc == false {
 		t.Fatalf("expected (false,true) when no incremental found (got %v,%v)", needFull, needInc)
 	}
 }
@@ -335,7 +333,7 @@ func TestManageSnapshots_IncrementalOutdated(t *testing.T) {
 
 	needFull, needInc := ManageSnapshots(cfg, 2000)
 	// full is OK, incremental outdated => (false,true)
-	if !(needFull == false && needInc == true) {
+	if needFull == true || needInc == false {
 		t.Fatalf("expected (false,true) when incremental outdated (got %v,%v)", needFull, needInc)
 	}
 }
@@ -355,7 +353,7 @@ func TestManageSnapshots_IncrementalStartMismatch(t *testing.T) {
 
 	needFull, needInc := ManageSnapshots(cfg, 1300)
 	// incremental doesn't start at fullSlot => should return (false, true)
-	if !(needFull == false && needInc == true) {
+	if needFull == true || needInc == false {
 		t.Fatalf("expected (false,true) when incremental start mismatch (got %v,%v)", needFull, needInc)
 	}
 }
