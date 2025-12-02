@@ -172,11 +172,13 @@ func EvaluateNodesWithVersions(nodes []RPCNode, cfg config.Config, defaultSlot i
 		if err != nil {
 			return false
 		}
+		var closeBodyErr error
 		defer func() {
-			if resp.Body.Close() != nil {
-				log.Printf("Failed to close health response body for %s: %v", rpc, err)
-			}
+			closeBodyErr = resp.Body.Close()
 		}()
+		if closeBodyErr != nil {
+			log.Printf("Failed to close health response body for %s: %v", rpc, err)
+		}
 		return resp.StatusCode == http.StatusOK
 	}
 
