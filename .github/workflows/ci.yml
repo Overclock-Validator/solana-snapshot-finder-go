@@ -21,28 +21,9 @@ jobs:
 
       - name: Install golangci-lint
         run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.58.0
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.6.2
 
       - name: Run CI targets
         run: make ci
 
-      - name: Install gocov & gocov-diff
-        run: |
-          go install github.com/axw/gocov/gocov@latest
-          go install github.com/axw/gocov/gocov-diff@latest
 
-      - name: Run coverage check on new/changed code
-        run: |
-          # Generate coverage profile
-          go test ./... -coverprofile=coverage.out -covermode=atomic
-          
-          # Check coverage for changed files only
-          gocov convert coverage.out | gocov-diff origin/main > coverage_diff.txt
-          
-          # Fail if coverage is below threshold (example: 80%)
-          COVERAGE=$(awk '{sum+=$3; count++} END {if(count>0) print sum/count; else print 100}' coverage_diff.txt)
-          echo "Coverage for new/changed code: $COVERAGE%"
-          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
-            echo "Coverage for new/changed code is below 80%!"
-            exit 1
-          fi

@@ -79,7 +79,10 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to fetch snapshot: %v", err)
 	}
-	defer resp.Body.Close()
+	var closeRespErr error
+	defer func() {
+		closeRespErr = resp.Body.Close()
+	}()
 
 	// Get the final URL after redirects
 	finalURL := resp.Request.URL.String()
@@ -136,7 +139,11 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 		log.Printf("Error during download: %v", err)
 		return "", 0, fmt.Errorf("error during snapshot download: %v", err)
 	}
-	tmpFile.Close()
+	defer func() {
+		if tmpFile.Close() != nil {
+			log.Printf("Error closing temporary file %s: %v", tmpFilePath, err)
+		}
+	}()
 	//log.Printf("Download completed to temporary file. Size: %d bytes", totalBytes)
 
 	// Copy from temporary to final location
@@ -145,7 +152,11 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 		log.Printf("Error opening temp file: %v", err)
 		return "", 0, fmt.Errorf("failed to open temp file for copying: %v", err)
 	}
-	defer srcFile.Close()
+	defer func() {
+		if err := srcFile.Close(); err != nil {
+			log.Printf("Error closing source file %s: %v", tmpFilePath, err)
+		}
+	}()
 
 	// Create the destination file with explicit permissions
 	dstFile, err := os.OpenFile(finalFilePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
@@ -153,8 +164,12 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 		log.Printf("Error creating destination file: %v", err)
 		return "", 0, fmt.Errorf("failed to create destination file: %v", err)
 	}
-	defer dstFile.Close()
 
+	defer func() {
+		if err := dstFile.Close(); err != nil {
+			log.Printf("Error destination source file %s: %v", finalFilePath, err)
+		}
+	}()
 	// Copy the file contents
 	_, err = io.Copy(dstFile, srcFile)
 	if err != nil {
@@ -173,7 +188,7 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 	if err := os.Rename(tmpFilePath, backupPath); err != nil {
 		log.Printf("Warning: Failed to rename temporary file to backup: %v", err)
 	} else {
-		//log.Printf("Kept backup file at: %s", backupPath)
+		log.Printf("Kept backup file at: %s", backupPath)
 	}
 
 	// Verify the final file exists
@@ -191,6 +206,9 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 	}
 	//log.Printf("Verified final file exists: %s", finalFilePath)
 
+	if closeRespErr != nil {
+		return "", 0, fmt.Errorf("failed to close response body: %w", closeRespErr)
+	}
 	// Print final progress
 	speed := float64(totalBytes) / 1024 / 1024 / time.Since(pw.StartTime).Seconds()
 	log.Printf("Download completed: %s | Speed: %.2f MB/s", finalFilePath, speed)
@@ -254,7 +272,9 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 
 		if resp.StatusCode != http.StatusOK {
 			//log.Printf("HEAD request returned status %d for %s", resp.StatusCode, snapshotURL)
-			resp.Body.Close()
+			if resp.Body.Close() != nil {
+				log.Printf("Failed to close HEAD response body for %s: %v", snapshotURL, err)
+			}
 			continue
 		}
 
@@ -268,7 +288,9 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 			}
 		}
 		//log.Printf("Remote snapshot filename: %s", fileName)
-		resp.Body.Close()
+		if resp.Body.Close() != nil {
+			log.Printf("Failed to close HEAD response body for %s: %v", snapshotURL, err)
+		}
 
 		// Extract slot from the filename
 		var remoteSlot int
@@ -338,7 +360,7 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 		}
 
 		if downloadedSlot < referenceSlot-cfg.FullThreshold {
-			//log.Printf("Warning: Downloaded snapshot might be old, but keeping it anyway")
+			log.Printf("Warning: Downloaded snapshot might be old, but keeping it anyway")
 		}
 	} else {
 		slotStart, slotEnd, err := ExtractIncrementalSnapshotSlots(finalPath)
