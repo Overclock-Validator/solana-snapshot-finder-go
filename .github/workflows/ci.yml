@@ -1,10 +1,8 @@
 name: CI
 
 on:
-  push:
-    branches: ['*']        # Trigger on any branch
-  pull_request:
-    branches: ['*']        # Trigger on PRs from any branch
+  push:        # triggers on any branch
+  pull_request: # triggers on any PR
 
 jobs:
   build:
