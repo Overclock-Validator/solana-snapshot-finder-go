@@ -216,11 +216,20 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 	// Get existing snapshot slot if it exists
 	var existingSlot int
 	var existingSnapshotPath string
+	var existingSnapshotTooOld bool
 	if strings.HasPrefix(snapshotType, "snapshot-") {
 		var err error
 		existingSnapshotPath, existingSlot, err = findRecentFullSnapshot(cfg.SnapshotPath, referenceSlot, 0)
 		if err == nil {
-			log.Printf("Found existing full snapshot: %s (Slot: %d)", existingSnapshotPath, existingSlot)
+			existingAge := referenceSlot - existingSlot
+			log.Printf("Found existing full snapshot: %s (Slot: %d, Age: %d slots)",
+				existingSnapshotPath, existingSlot, existingAge)
+
+			if existingAge > cfg.FullThreshold {
+				log.Printf("Existing snapshot is too old (age: %d > threshold: %d). Will try to download newer snapshot.",
+					existingAge, cfg.FullThreshold)
+				existingSnapshotTooOld = true
+			}
 		}
 	}
 
@@ -282,10 +291,18 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 			//log.Printf("Remote snapshot slot: %d", remoteSlot)
 
 			// Compare with existing slot and skip download if not newer
-			if existingSlot > 0 && remoteSlot <= existingSlot {
-				/*log.Printf("Remote snapshot (slot %d) is not newer than existing snapshot (slot %d). Skipping download.",
-				remoteSlot, existingSlot)*/
-				return "", nil
+			// But only skip if existing is not too old
+			if existingSlot > 0 && remoteSlot <= existingSlot && !existingSnapshotTooOld {
+				log.Printf("Remote snapshot (slot %d) is not newer than existing snapshot (slot %d). Using existing snapshot.",
+					remoteSlot, existingSlot)
+				return existingSnapshotPath, nil
+			}
+
+			// If existing is too old and remote is not newer, continue trying other RPCs
+			if existingSlot > 0 && remoteSlot <= existingSlot && existingSnapshotTooOld {
+				log.Printf("Remote snapshot (slot %d) is not newer than existing (slot %d), but existing is too old. Trying next RPC.",
+					remoteSlot, existingSlot)
+				continue
 			}
 		}
 
@@ -299,7 +316,24 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 	}
 
 	if downloadErr != nil {
+		// If we have an existing snapshot that's still valid (not too old), use it
+		if existingSnapshotPath != "" && !existingSnapshotTooOld {
+			log.Printf("No newer snapshot available, but existing snapshot is still within threshold. Using existing: %s",
+				existingSnapshotPath)
+			return existingSnapshotPath, nil
+		}
 		return "", fmt.Errorf("failed to download snapshot with any extension: %v", downloadErr)
+	}
+
+	// If finalPath is empty (all RPCs skipped) but we have a valid existing snapshot, use it
+	if finalPath == "" && existingSnapshotPath != "" && !existingSnapshotTooOld {
+		log.Printf("All RPCs checked. Using existing snapshot within threshold: %s", existingSnapshotPath)
+		return existingSnapshotPath, nil
+	}
+
+	// If finalPath is empty and existing is too old, that's an error
+	if finalPath == "" {
+		return "", fmt.Errorf("no snapshot downloaded and no valid existing snapshot found")
 	}
 
 	// Verify the file exists in the remote directory
@@ -322,19 +356,19 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 	if strings.HasPrefix(snapshotType, "snapshot-") {
 		downloadedSlot, err := ExtractFullSnapshotSlot(finalPath)
 		if err != nil {
-			log.Printf("Warning: Failed to extract slot from downloaded snapshot: %v", err)
-			return "", nil
+			log.Printf("Error: Failed to extract slot from downloaded snapshot: %v", err)
+			return "", fmt.Errorf("failed to extract slot from downloaded snapshot: %v", err)
 		}
 
 		// Double-check that downloaded slot matches what we expected
 		if existingSlot > 0 && downloadedSlot <= existingSlot {
-			log.Printf("Warning: Downloaded snapshot (slot %d) is not newer than existing snapshot (slot %d). Removing redundant download.",
+			log.Printf("Warning: Downloaded snapshot (slot %d) is not newer than existing snapshot (slot %d). Removing redundant download and using existing.",
 				downloadedSlot, existingSlot)
 			// Remove the downloaded file since it's not newer
 			if err := os.Remove(finalPath); err != nil {
 				log.Printf("Warning: Failed to remove redundant downloaded snapshot: %v", err)
 			}
-			return "", nil
+			return existingSnapshotPath, nil
 		}
 
 		if downloadedSlot < referenceSlot-cfg.FullThreshold {
@@ -343,8 +377,8 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 	} else {
 		slotStart, slotEnd, err := ExtractIncrementalSnapshotSlots(finalPath)
 		if err != nil {
-			log.Printf("Warning: Failed to extract slots from incremental snapshot: %v", err)
-			return "", nil
+			log.Printf("Error: Failed to extract slots from incremental snapshot: %v", err)
+			return "", fmt.Errorf("failed to extract slots from incremental snapshot: %v", err)
 		}
 
 		if referenceSlot-slotEnd > cfg.IncrementalThreshold {
@@ -353,8 +387,8 @@ func DownloadSnapshot(rpcAddress string, cfg config.Config, snapshotType string,
 
 		_, fullSlot, err := findRecentFullSnapshot(cfg.SnapshotPath, referenceSlot, 0)
 		if err != nil {
-			log.Printf("Warning: Could not find full snapshot: %v", err)
-			return "", nil
+			log.Printf("Error: Could not find full snapshot for incremental: %v", err)
+			return "", fmt.Errorf("could not find full snapshot for incremental: %v", err)
 		}
 
 		if slotStart != fullSlot {
