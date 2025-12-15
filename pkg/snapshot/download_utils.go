@@ -84,7 +84,8 @@ func writeSnapshotToFile(snapshotURL, tmpDir, baseDir string, genesis bool) (str
 	// Get the final URL after redirects
 	finalURL := resp.Request.URL.String()
 	fileName := filepath.Base(finalURL)
-	log.Printf("Original filename from final URL: %s", finalURL)
+	log.Printf("Original final URL: %s", finalURL)
+	log.Printf("Original filename from final URL: %s", fileName)
 
 	if fileName == "" {
 		return "", 0, fmt.Errorf("invalid file name parsed from URL: %s", finalURL)
