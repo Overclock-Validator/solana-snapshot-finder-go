@@ -175,13 +175,19 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open source file: %v", err)
 	}
-	defer sourceFile.Close()
+	var closeSrcErr error
+	defer func() {
+		closeSrcErr = sourceFile.Close()
+	}()
 
 	destFile, err := os.OpenFile(dst, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to create destination file: %v", err)
 	}
-	defer destFile.Close()
+	var closeDestErr error
+	defer func() {
+		closeDestErr = destFile.Close()
+	}()
 
 	if _, err = io.Copy(destFile, sourceFile); err != nil {
 		return fmt.Errorf("failed to copy file contents: %v", err)
@@ -189,6 +195,13 @@ func copyFile(src, dst string) error {
 
 	if err = destFile.Sync(); err != nil {
 		return fmt.Errorf("failed to sync destination file: %v", err)
+	}
+
+	if closeDestErr != nil {
+		return fmt.Errorf("failed to close destination file: %w", closeDestErr)
+	}
+	if closeSrcErr != nil {
+		return fmt.Errorf("failed to close source file: %w", closeSrcErr)
 	}
 
 	return nil

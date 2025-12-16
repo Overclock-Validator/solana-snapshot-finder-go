@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -47,7 +47,10 @@ func GetRPCNodes(rpcAddress string, retries int, blacklist []string, privateRPC 
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to fetch RPC nodes after %d retries: %v", retries, err)
 	}
-	defer resp.Body.Close()
+	var closeBodyErr error
+	defer func() {
+		closeBodyErr = resp.Body.Close()
+	}()
 
 	var result struct {
 		Result []struct {
@@ -108,6 +111,9 @@ func GetRPCNodes(rpcAddress string, retries int, blacklist []string, privateRPC 
 			}
 		}
 	}
+	if closeBodyErr != nil {
+		return nil, nil, fmt.Errorf("failed to close response body: %w", closeBodyErr)
+	}
 	return nodes, addresses, nil
 }
 
@@ -131,13 +137,15 @@ func GetReferenceSlot(rpcAddress string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to fetch slot: %v", err)
 	}
-	defer resp.Body.Close()
-
+	var errorCloseRespBody error
+	defer func() {
+		errorCloseRespBody = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	respBody, err := ioutil.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return 0, fmt.Errorf("failed to read response body: %v", err)
 	}
@@ -149,6 +157,9 @@ func GetReferenceSlot(rpcAddress string) (int, error) {
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return 0, fmt.Errorf("failed to parse response: %v", err)
+	}
+	if errorCloseRespBody != nil {
+		return 0, fmt.Errorf("failed to close response body: %w", errorCloseRespBody)
 	}
 
 	return result.Result, nil
@@ -177,51 +188,4 @@ func FetchRPCNodes(cfg config.Config) []RPCNode {
 	}
 
 	return nil // Should not reach here
-}
-
-// Selects the best RPC from the evaluated nodes
-func selectBestRPC(results []struct {
-	rpc     string
-	speed   float64
-	latency float64
-	slot    int
-	diff    int
-	version string
-	status  string
-}) string {
-	var bestGoodNode struct {
-		rpc   string
-		speed float64
-	}
-	var bestSlowNode struct {
-		rpc   string
-		speed float64
-	}
-
-	for _, result := range results {
-		if result.status == "good" && result.speed > bestGoodNode.speed {
-			bestGoodNode = struct {
-				rpc   string
-				speed float64
-			}{rpc: result.rpc, speed: result.speed}
-		}
-		if result.status == "slow" && result.speed > bestSlowNode.speed {
-			bestSlowNode = struct {
-				rpc   string
-				speed float64
-			}{rpc: result.rpc, speed: result.speed}
-		}
-	}
-
-	// Prioritize good nodes; fallback to the fastest slow node if no good nodes are available
-	if bestGoodNode.rpc != "" {
-		return bestGoodNode.rpc
-	}
-	if bestSlowNode.rpc != "" {
-		log.Printf("No good nodes found. Falling back to the fastest slow node: %s with speed %.2f MB/s", bestSlowNode.rpc, bestSlowNode.speed)
-		return bestSlowNode.rpc
-	}
-
-	log.Println("No suitable RPC nodes found.")
-	return ""
 }
