@@ -494,14 +494,59 @@ func SortBestRPCs(results []struct {
 	diff    int
 	version string
 	status  string
-}) []string {
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].speed > results[j].speed
+}, cfg config.Config) []string {
+	// Filter: only good and slow nodes with fresh slots
+	// Use FullThreshold
+	threshold := cfg.FullThreshold
+	if threshold <= 0 {
+		threshold = 25000 // Default if not set
+	}
+
+	var filtered []struct {
+		rpc     string
+		speed   float64
+		latency float64
+		slot    int
+		diff    int
+		version string
+		status  string
+	}
+
+	for _, result := range results {
+		// Only include good/slow nodes with fresh snapshots
+		// diff >= -100 allows for slight clock skew where node might be slightly ahead
+		if (result.status == "good" || result.status == "slow") && result.diff < threshold && result.diff >= -100 {
+			filtered = append(filtered, result)
+		}
+	}
+
+	// If no nodes meet the strict criteria, fall back to just good/slow nodes
+	if len(filtered) == 0 {
+		log.Printf("Warning: No nodes found with fresh snapshots (diff < %d slots). Falling back to all good/slow nodes.", threshold)
+		for _, result := range results {
+			if result.status == "good" || result.status == "slow" {
+				filtered = append(filtered, result)
+			}
+		}
+	}
+
+	// Sort by slot freshness (smaller diff = fresher) and  speed (higher = better)
+	sort.Slice(filtered, func(i, j int) bool {
+		// Prioritize slot freshness first
+		if filtered[i].diff != filtered[j].diff {
+			return filtered[i].diff < filtered[j].diff // Fresher slot first
+		}
+		// If slots are equally fresh, use speed as tiebreaker
+		return filtered[i].speed > filtered[j].speed
 	})
 
 	var rpcs []string
-	for _, result := range results {
+	for _, result := range filtered {
 		rpcs = append(rpcs, result.rpc)
+	}
+
+	if len(filtered) > 0 {
+		log.Printf("Selected %d RPC nodes with fresh snapshots (diff < %d slots, out of %d total evaluated)", len(rpcs), threshold, len(results))
 	}
 
 	return rpcs
