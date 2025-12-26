@@ -1,13 +1,56 @@
-rpc_address: "https://api.mainnet-beta.solana.com"
+rpc_addresses:                 # Multiple RPC endpoints (uses highest slot)
+  - "https://api.mainnet-beta.solana.com"
+  # - "https://backup-rpc.example.com"
 snapshot_path: "./snapshots"
-min_download_speed: 100
-max_latency: 200
 num_of_retries: 5
 sleep_before_retry: 5
-private_rpc: false
-worker_count: 100
-full_threshold: 25000
-incremental_threshold: 500
 blacklist:
   - "192.168.1.100"
   - "10.0.0.5"
+enable_blacklist: true
+whitelist: []
+  # Examples:
+  # - "https://snapshots.avorio.network/mainnet-beta/"
+  # - "http://custom-node:8899"
+whitelist_mode: "additional"  # "only", "additional", or "disabled"
+worker_count: 100
+full_threshold: 20000          # Agave 2.0: incrementals valid for ~25k slots after full
+incremental_threshold: 200     # Allows slightly ahead incrementals
+
+# Stage 1 (Fast Triage) - Quick download speed sampling
+stage1_warm_kib: 256           # Warmup data in KiB
+stage1_window_kib: 512         # Window size in KiB
+stage1_windows: 2              # Number of measurement windows
+stage1_timeout_ms: 5000        # Timeout in milliseconds
+stage1_concurrency: 0          # Concurrent tests (0=auto)
+
+# Stage 2 (Confirm) - Accurate download speed measurement (tests run sequentially)
+stage2_top_k: 5              # Test top K candidates from stage 1
+stage2_warm_sec: 2           # Warmup duration in seconds (discards data)
+stage2_measure_sec: 3        # Measurement duration in seconds (all data counts)
+stage2_min_ratio: 0.6        # Collapse guard: reject if min < ratio*avg
+# stage2_min_abs_mbs: 0      # Minimum absolute speed in MB/s (0 = disabled, default)
+
+# RTT filtering (filters nodes by probe round-trip time before speed tests)
+max_rtt_ms: 200              # Max RTT in ms (0 = no limit)
+
+# TCP precheck timeout (filters unreachable hosts before HTTP probing)
+tcp_timeout_ms: 1000         # TCP precheck timeout in ms (default: 1000)
+
+# Version filtering (filters nodes by Solana/Agave version)
+min_node_version: "2.2.0"    # Minimum node version (empty = no minimum)
+allowed_node_versions: []    # Specific versions to allow (empty = use min_node_version)
+  # Examples (uncomment to use specific versions):
+  # - "3.2"      # Allow 3.2.x
+  # - "3.0.2"    # Allow 3.0.2.x
+  # - "2.2"      # Allow 2.2.x
+
+# Snapshot retention - controls how many snapshots are kept on disk
+max_full_snapshots: 2        # Max full snapshots to keep (0 = unlimited). Oldest are deleted when limit exceeded.
+delete_old_snapshots: false  # Enable age-based deletion. When false, only retention limit applies.
+
+# Download safety - ensures valid incremental exists during slow full downloads
+download_incremental_first: true  # Download incremental before full snapshot (default: true)
+
+# Safety margin for expiration warnings (uses full_threshold as validity window)
+safety_margin_slots: 2000       # Slots before expiration to trigger warnings (shows time remaining)

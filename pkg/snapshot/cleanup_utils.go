@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -98,4 +99,117 @@ func CleanupOldSnapshots(snapshotPath string, referenceSlot, fullThreshold, incr
 	}
 
 	return nil
+}
+
+// FullSnapshotInfo contains information about a full snapshot file
+type FullSnapshotInfo struct {
+	FileName string
+	Slot     int
+	Size     int64
+}
+
+// findAllFullSnapshots finds all full snapshots in the directory and returns their info
+func findAllFullSnapshots(snapshotPath string) []FullSnapshotInfo {
+	var snapshots []FullSnapshotInfo
+
+	files, err := os.ReadDir(snapshotPath)
+	if err != nil {
+		log.Printf("Failed to read directory %s: %v", snapshotPath, err)
+		return snapshots
+	}
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		fileName := file.Name()
+		if !strings.HasPrefix(fileName, "snapshot-") {
+			continue
+		}
+		if !strings.HasSuffix(fileName, ".tar.zst") && !strings.HasSuffix(fileName, ".tar.bz2") {
+			continue
+		}
+
+		slot, err := ExtractFullSnapshotSlot(fileName)
+		if err != nil {
+			continue
+		}
+
+		info, err := file.Info()
+		if err != nil {
+			continue
+		}
+
+		snapshots = append(snapshots, FullSnapshotInfo{
+			FileName: fileName,
+			Slot:     slot,
+			Size:     info.Size(),
+		})
+	}
+
+	return snapshots
+}
+
+// deleteIncrementalsForBase removes all incremental snapshots with the given base slot
+func deleteIncrementalsForBase(snapshotPath string, baseSlot int) {
+	pattern := fmt.Sprintf("incremental-snapshot-%d-*.tar.*", baseSlot)
+	matches, err := filepath.Glob(filepath.Join(snapshotPath, pattern))
+	if err != nil {
+		return
+	}
+
+	for _, match := range matches {
+		if err := os.Remove(match); err == nil {
+			log.Printf("Deleted associated incremental: %s", filepath.Base(match))
+		}
+	}
+}
+
+// EnforceRetentionLimit keeps only the N most recent full snapshots in the main
+// snapshot directory (not remote/). When the limit is exceeded, the oldest snapshots
+// and their associated incrementals are deleted.
+// This runs asynchronously to avoid blocking downloads.
+func EnforceRetentionLimit(snapshotPath string, maxSnapshots int) {
+	if maxSnapshots <= 0 {
+		// 0 means unlimited, don't enforce any limit
+		return
+	}
+
+	// Find all full snapshots sorted by slot (newest first)
+	fullSnapshots := findAllFullSnapshots(snapshotPath)
+	if len(fullSnapshots) == 0 {
+		return
+	}
+
+	sort.Slice(fullSnapshots, func(i, j int) bool {
+		return fullSnapshots[i].Slot > fullSnapshots[j].Slot
+	})
+
+	if len(fullSnapshots) <= maxSnapshots {
+		log.Printf("Retention limit: %d/%d full snapshots, no cleanup needed", len(fullSnapshots), maxSnapshots)
+		return
+	}
+
+	// Delete oldest snapshots beyond limit
+	toDelete := fullSnapshots[maxSnapshots:]
+	var freedSpace int64
+
+	for _, snap := range toDelete {
+		log.Printf("Retention limit exceeded: removing old snapshot %s (slot %d)", snap.FileName, snap.Slot)
+
+		// Delete the full snapshot
+		fullPath := filepath.Join(snapshotPath, snap.FileName)
+		if err := os.Remove(fullPath); err != nil {
+			log.Printf("Failed to delete %s: %v", snap.FileName, err)
+			continue
+		}
+		freedSpace += snap.Size
+
+		// Delete associated incrementals (same base slot)
+		deleteIncrementalsForBase(snapshotPath, snap.Slot)
+	}
+
+	log.Printf("Retention cleanup: removed %d full snapshots, freed %.2f GB",
+		len(toDelete), float64(freedSpace)/(1024*1024*1024))
 }

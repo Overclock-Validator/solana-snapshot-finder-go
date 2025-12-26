@@ -1,2 +1,22 @@
 run.sh
+
+# Config files (user-specific)
 config.yaml
+config.toml
+
+# Backup files
+*.bak
+
+# Downloaded snapshots
+snapshots/
+*.tar.zst
+
+# Built binary (at repo root)
+/solana-snapshot-finder
+
+# OS files
+.DS_Store
+**/.DS_Store
+
+# Claude Code settings
+.claude/
