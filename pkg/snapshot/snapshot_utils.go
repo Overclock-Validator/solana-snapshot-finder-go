@@ -52,7 +52,9 @@ func ExtractIncrementalSnapshotSlots(fileName string) (int, int, error) {
 	return slotStart, slotEnd, nil
 }
 
-func findRecentFullSnapshot(destDir string, referenceSlot, threshold int) (string, int, error) {
+// FindRecentFullSnapshot finds the most recent full snapshot in the given directory
+// that is within the threshold of the reference slot. Returns the path, slot, and error.
+func FindRecentFullSnapshot(destDir string, referenceSlot, threshold int) (string, int, error) {
 	var mostRecent string
 	var mostRecentSlot int
 
@@ -95,7 +97,7 @@ func findRecentFullSnapshot(destDir string, referenceSlot, threshold int) (strin
 	}
 
 	if mostRecent == "" {
-		return "", 0, fmt.Errorf("no full snapshots found")
+		return "", 0, fmt.Errorf("no local full snapshots found in %s", destDir)
 	}
 
 	//log.Printf("Found most recent full snapshot: %s (Slot: %d)", mostRecent, mostRecentSlot)
@@ -197,9 +199,9 @@ func copyFile(src, dst string) error {
 func ManageSnapshots(cfg config.Config, referenceSlot int) (bool, bool) {
 	log.Println("Checking snapshots...")
 
-	fullSnapshot, fullSlot, err := findRecentFullSnapshot(cfg.SnapshotPath, referenceSlot, 0)
+	fullSnapshot, fullSlot, err := FindRecentFullSnapshot(cfg.SnapshotPath, referenceSlot, 0)
 	if err != nil {
-		log.Printf("No full snapshots found: %v", err)
+		log.Printf("No local full snapshots found in %s (will download from network)", cfg.SnapshotPath)
 		return true, true
 	}
 
@@ -250,4 +252,86 @@ func UntarGenesis(snapshotPath string) error {
 
 	log.Printf("Successfully untarred genesis file to: %s", snapshotPath)
 	return nil
+}
+
+// ExpirationStatus contains information about snapshot expiration
+type ExpirationStatus struct {
+	InWarningWindow bool // True if snapshots are close to expiring
+	SlotsRemaining  int  // Slots until the full snapshot expires
+	ShouldWait      bool // True if should wait for fresh snapshots from network
+	CurrentFullSlot int  // Slot of the current full snapshot
+	CurrentIncSlot  int  // Slot of the current incremental snapshot
+}
+
+// IncrementalExpirationStatus contains information about incremental snapshot expiration
+type IncrementalExpirationStatus struct {
+	SlotsUntilExpiration int // Slots until the incremental expires (based on full snapshot base)
+	BaseSlot             int // Base slot of the incremental (same as full snapshot slot)
+	CurrentIncSlot       int // Current end slot of the incremental
+}
+
+// CheckExpirationStatus checks if current snapshots are approaching expiration.
+// This is used to warn users and potentially wait for fresh snapshots.
+func CheckExpirationStatus(snapshotPath string, referenceSlot, validitySlots, safetyMargin int) ExpirationStatus {
+	status := ExpirationStatus{}
+
+	// Find the most recent full snapshot
+	_, fullSlot, err := FindRecentFullSnapshot(snapshotPath, referenceSlot, 0)
+	if err != nil {
+		// No full snapshot found, should download new one
+		status.ShouldWait = true
+		return status
+	}
+	status.CurrentFullSlot = fullSlot
+
+	// Calculate slots remaining until expiration
+	// Full snapshot validity = validitySlots from when it was created
+	slotsUsed := referenceSlot - fullSlot
+	status.SlotsRemaining = validitySlots - slotsUsed
+
+	// Check if in warning window
+	if status.SlotsRemaining < safetyMargin {
+		status.InWarningWindow = true
+		// If still positive but in warning window, might want to wait for fresh
+		if status.SlotsRemaining > 0 {
+			status.ShouldWait = true
+		}
+	}
+
+	// Find incremental snapshot info
+	incSnapshot, err := findHighestIncrementalSnapshot(snapshotPath, fullSlot)
+	if err == nil {
+		status.CurrentIncSlot = incSnapshot.SlotEnd
+	}
+
+	return status
+}
+
+// CheckIncrementalExpiration checks how close the incremental snapshot is to expiration.
+// This is used during full downloads to decide if we need to pause and get a new incremental.
+func CheckIncrementalExpiration(snapshotPath string, referenceSlot, validitySlots int) IncrementalExpirationStatus {
+	status := IncrementalExpirationStatus{}
+
+	// Find the most recent full snapshot (base for incremental)
+	_, fullSlot, err := FindRecentFullSnapshot(snapshotPath, referenceSlot, 0)
+	if err != nil {
+		// No full snapshot, no incremental to worry about
+		return status
+	}
+	status.BaseSlot = fullSlot
+
+	// Find the highest incremental for this base
+	incSnapshot, err := findHighestIncrementalSnapshot(snapshotPath, fullSlot)
+	if err != nil {
+		// No incremental found
+		return status
+	}
+	status.CurrentIncSlot = incSnapshot.SlotEnd
+
+	// Calculate slots until the incremental becomes unusable
+	// The incremental is tied to the full snapshot's validity
+	slotsUsed := referenceSlot - fullSlot
+	status.SlotsUntilExpiration = validitySlots - slotsUsed
+
+	return status
 }

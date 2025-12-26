@@ -18,15 +18,51 @@ var DEFAULT_HEADERS = map[string]string{
 }
 
 type RPCNode struct {
-	Address string
-	Version string
+	Address  string
+	Version  string
+	IsStatic bool // true for static snapshot URLs (e.g., avorio.network)
 }
 
-func GetRPCNodes(rpcAddress string, retries int, blacklist []string, privateRPC bool) ([]RPCNode, []string, error) {
+// isStaticSnapshotURL detects if a URL is a direct snapshot endpoint
+func isStaticSnapshotURL(url string) bool {
+	// Check if URL looks like a direct snapshot path
+	return strings.HasSuffix(url, "/") ||
+		strings.Contains(url, "/snapshot") ||
+		strings.Contains(url, "/incremental")
+}
+
+// parseWhitelist converts whitelist entries into RPCNode structs
+func parseWhitelist(whitelist []string) []RPCNode {
+	var nodes []RPCNode
+	for _, entry := range whitelist {
+		if entry == "" {
+			continue
+		}
+		// Detect if it's a static snapshot URL or RPC endpoint
+		if isStaticSnapshotURL(entry) {
+			nodes = append(nodes, RPCNode{
+				Address:  entry,
+				Version:  "whitelist-static",
+				IsStatic: true,
+			})
+		} else {
+			// Treat as regular RPC endpoint
+			nodes = append(nodes, RPCNode{
+				Address:  entry,
+				Version:  "whitelist-rpc",
+				IsStatic: false,
+			})
+		}
+	}
+	return nodes
+}
+
+// getPublicNodes fetches nodes from the Solana cluster
+func getPublicNodes(rpcAddress string, retries int) ([]RPCNode, error) {
 	payload := []byte(`{"jsonrpc":"2.0", "id":1, "method":"getClusterNodes"}`)
 	req, err := http.NewRequest("POST", rpcAddress, bytes.NewBuffer(payload))
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create request: %v", err)
+		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
 
 	// Add default headers
@@ -34,7 +70,7 @@ func GetRPCNodes(rpcAddress string, retries int, blacklist []string, privateRPC 
 		req.Header.Set(key, value)
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second} // Adjust timeout as needed
+	client := &http.Client{Timeout: 15 * time.Second}
 
 	var resp *http.Response
 	for attempt := 1; attempt <= retries; attempt++ {
@@ -42,10 +78,10 @@ func GetRPCNodes(rpcAddress string, retries int, blacklist []string, privateRPC 
 		if err == nil {
 			break
 		}
-		time.Sleep(2 * time.Second) // Add delay between retries
+		time.Sleep(2 * time.Second)
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to fetch RPC nodes after %d retries: %v", retries, err)
+		return nil, fmt.Errorf("failed to fetch cluster nodes after %d retries: %v", retries, err)
 	}
 	defer resp.Body.Close()
 
@@ -57,58 +93,105 @@ func GetRPCNodes(rpcAddress string, retries int, blacklist []string, privateRPC 
 		} `json:"result"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, nil, fmt.Errorf("failed to decode RPC nodes response: %v", err)
+		return nil, fmt.Errorf("failed to decode cluster nodes response: %v", err)
 	}
 
-	nodes := []RPCNode{}
-	addresses := []string{}
+	var nodes []RPCNode
 	for _, node := range result.Result {
-		// Handle regular RPC nodes
 		if node.RPC != "" {
-			rpcIP := strings.Split(node.RPC, ":")[0]
-
-			// Check if the IP is blacklisted
-			isBlacklisted := false
-			for _, blocked := range blacklist {
-				if rpcIP == blocked {
-					isBlacklisted = true
-					break
-				}
-			}
-
-			if !isBlacklisted {
-				nodes = append(nodes, RPCNode{
-					Address: node.RPC,
-					Version: node.Version,
-				})
-				addresses = append(addresses, node.RPC)
-			}
-		}
-
-		// Handle private RPC nodes
-		if privateRPC && node.Gossip != "" {
-			gossipIP := strings.Split(node.Gossip, ":")[0] // Extract gossip IP
-			privateRPCAddress := fmt.Sprintf("%s:8899", gossipIP)
-
-			// Check if the IP is blacklisted
-			isBlacklisted := false
-			for _, blocked := range blacklist {
-				if gossipIP == blocked {
-					isBlacklisted = true
-					break
-				}
-			}
-
-			if !isBlacklisted {
-				nodes = append(nodes, RPCNode{
-					Address: privateRPCAddress,
-					Version: node.Version,
-				})
-				addresses = append(addresses, privateRPCAddress)
-			}
+			nodes = append(nodes, RPCNode{
+				Address:  node.RPC,
+				Version:  node.Version,
+				IsStatic: false,
+			})
 		}
 	}
-	return nodes, addresses, nil
+	return nodes, nil
+}
+
+// filterBlacklist removes blacklisted nodes
+func filterBlacklist(nodes []RPCNode, blacklist []string) []RPCNode {
+	if len(blacklist) == 0 {
+		return nodes
+	}
+
+	var filtered []RPCNode
+	for _, node := range nodes {
+		isBlacklisted := false
+		nodeIP := strings.Split(node.Address, ":")[0]
+		for _, blocked := range blacklist {
+			if nodeIP == blocked || strings.Contains(node.Address, blocked) {
+				isBlacklisted = true
+				break
+			}
+		}
+		if !isBlacklisted {
+			filtered = append(filtered, node)
+		}
+	}
+	return filtered
+}
+
+func GetRPCNodes(rpcAddress string, retries int, blacklist []string, enableBlacklist bool, whitelist []string, whitelistMode string) ([]RPCNode, []string, error) {
+	var sources []RPCNode
+
+	// Validate whitelist_mode
+	validModes := map[string]bool{"only": true, "additional": true, "disabled": true}
+	if !validModes[whitelistMode] {
+		log.Printf("Warning: Invalid whitelist_mode '%s', defaulting to 'additional'", whitelistMode)
+		whitelistMode = "additional"
+	}
+
+	// Handle whitelist mode
+	switch whitelistMode {
+	case "only":
+		// Only process whitelist
+		sources = parseWhitelist(whitelist)
+		if len(sources) == 0 {
+			return nil, nil, fmt.Errorf("whitelist_mode is 'only' but whitelist is empty")
+		}
+		log.Printf("Using whitelist-only mode with %d entries", len(sources))
+
+	case "additional":
+		// Get public nodes + whitelist
+		publicNodes, err := getPublicNodes(rpcAddress, retries)
+		if err != nil {
+			log.Printf("Warning: Failed to fetch public nodes: %v", err)
+		}
+		whitelistNodes := parseWhitelist(whitelist)
+		sources = append(publicNodes, whitelistNodes...)
+		if len(whitelistNodes) > 0 {
+			log.Printf("Using %d public nodes + %d whitelist entries", len(publicNodes), len(whitelistNodes))
+		}
+
+	case "disabled":
+		// Only get public nodes
+		publicNodes, err := getPublicNodes(rpcAddress, retries)
+		if err != nil {
+			return nil, nil, err
+		}
+		sources = publicNodes
+	}
+
+	// Apply blacklist filtering if enabled
+	if enableBlacklist && len(blacklist) > 0 {
+		beforeCount := len(sources)
+		sources = filterBlacklist(sources, blacklist)
+		filtered := beforeCount - len(sources)
+		if filtered > 0 {
+			log.Printf("Blacklist filtered out %d nodes", filtered)
+		}
+	} else if !enableBlacklist && len(blacklist) > 0 {
+		log.Printf("Blacklist is disabled (contains %d entries but not filtering)", len(blacklist))
+	}
+
+	// Extract addresses for compatibility
+	addresses := []string{}
+	for _, node := range sources {
+		addresses = append(addresses, node.Address)
+	}
+
+	return sources, addresses, nil
 }
 
 func GetReferenceSlot(rpcAddress string) (int, error) {
@@ -126,7 +209,7 @@ func GetReferenceSlot(rpcAddress string) (int, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 4 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("failed to fetch slot: %v", err)
@@ -154,74 +237,85 @@ func GetReferenceSlot(rpcAddress string) (int, error) {
 	return result.Result, nil
 }
 
-// FetchRPCNodes fetches RPC nodes
-func FetchRPCNodes(cfg config.Config) []RPCNode {
+// GetReferenceSlotFromMultiple queries multiple RPC endpoints and returns the highest slot
+// This handles the case where some RPCs might be behind or unavailable
+func GetReferenceSlotFromMultiple(rpcAddresses []string) (int, string, error) {
+	if len(rpcAddresses) == 0 {
+		return 0, "", fmt.Errorf("no RPC addresses provided")
+	}
+
+	var highestSlot int
+	var bestRPC string
+	var lastErr error
+	var successCount int
+
+	for _, rpc := range rpcAddresses {
+		slot, err := GetReferenceSlot(rpc)
+		if err != nil {
+			log.Printf("RPC %s failed to get slot: %v", rpc, err)
+			lastErr = err
+			continue
+		}
+		successCount++
+		log.Printf("RPC %s returned slot: %d", rpc, slot)
+		if slot > highestSlot {
+			highestSlot = slot
+			bestRPC = rpc
+		}
+	}
+
+	if successCount == 0 {
+		return 0, "", fmt.Errorf("all RPC endpoints failed, last error: %v", lastErr)
+	}
+
+	if successCount < len(rpcAddresses) {
+		log.Printf("Warning: %d/%d RPC endpoints responded", successCount, len(rpcAddresses))
+	}
+
+	log.Printf("Using reference slot %d from %s (highest among %d sources)", highestSlot, bestRPC, successCount)
+	return highestSlot, bestRPC, nil
+}
+
+// FetchClusterNodes fetches cluster nodes (validators/snapshot sources) via RPC
+// preferredRPC is tried first if provided (e.g., the RPC that worked for getSlot)
+func FetchClusterNodes(cfg config.Config, preferredRPC string) []RPCNode {
 	var nodes []RPCNode
 	var err error
 
-	for attempt := 1; attempt <= cfg.NumOfRetries; attempt++ {
-		nodes, _, err = GetRPCNodes(cfg.RPCAddress, cfg.NumOfRetries, cfg.Blacklist, cfg.PrivateRPC)
+	// Build ordered list of RPCs to try, with preferred first
+	rpcAddresses := make([]string, 0, len(cfg.RPCAddresses))
+	if preferredRPC != "" {
+		rpcAddresses = append(rpcAddresses, preferredRPC)
+	}
+	for _, addr := range cfg.RPCAddresses {
+		if addr != preferredRPC {
+			rpcAddresses = append(rpcAddresses, addr)
+		}
+	}
+
+	// Try each RPC address until one succeeds (no nested retries - getPublicNodes already retries)
+	for _, rpcAddr := range rpcAddresses {
+		nodes, _, err = GetRPCNodes(
+			rpcAddr,
+			cfg.NumOfRetries,
+			cfg.Blacklist,
+			cfg.EnableBlacklist,
+			cfg.Whitelist,
+			cfg.WhitelistMode,
+		)
 		if err == nil && len(nodes) > 0 {
-			//log.Printf("Fetched %d RPC nodes on attempt %d.", len(nodes), attempt)
+			log.Printf("Fetched %d cluster nodes from %s", len(nodes), rpcAddr)
 			return nodes
 		}
 
-		//log.Printf("Attempt %d/%d to fetch RPC nodes failed: %v", attempt, cfg.NumOfRetries, err)
-		time.Sleep(2 * time.Second) // Add delay between retries
+		log.Printf("Failed to fetch cluster nodes from %s: %v", rpcAddr, err)
 	}
 
 	if err != nil {
-		log.Fatalf("Failed to fetch RPC nodes after %d retries: %v", cfg.NumOfRetries, err)
+		log.Fatalf("Failed to fetch cluster nodes from any endpoint: %v", err)
 	} else if len(nodes) == 0 {
-		log.Fatalf("No RPC nodes found after %d retries.", cfg.NumOfRetries)
+		log.Fatalf("No cluster nodes found from any endpoint.")
 	}
 
 	return nil // Should not reach here
-}
-
-// Selects the best RPC from the evaluated nodes
-func selectBestRPC(results []struct {
-	rpc     string
-	speed   float64
-	latency float64
-	slot    int
-	diff    int
-	version string
-	status  string
-}) string {
-	var bestGoodNode struct {
-		rpc   string
-		speed float64
-	}
-	var bestSlowNode struct {
-		rpc   string
-		speed float64
-	}
-
-	for _, result := range results {
-		if result.status == "good" && result.speed > bestGoodNode.speed {
-			bestGoodNode = struct {
-				rpc   string
-				speed float64
-			}{rpc: result.rpc, speed: result.speed}
-		}
-		if result.status == "slow" && result.speed > bestSlowNode.speed {
-			bestSlowNode = struct {
-				rpc   string
-				speed float64
-			}{rpc: result.rpc, speed: result.speed}
-		}
-	}
-
-	// Prioritize good nodes; fallback to the fastest slow node if no good nodes are available
-	if bestGoodNode.rpc != "" {
-		return bestGoodNode.rpc
-	}
-	if bestSlowNode.rpc != "" {
-		log.Printf("No good nodes found. Falling back to the fastest slow node: %s with speed %.2f MB/s", bestSlowNode.rpc, bestSlowNode.speed)
-		return bestSlowNode.rpc
-	}
-
-	log.Println("No suitable RPC nodes found.")
-	return ""
 }

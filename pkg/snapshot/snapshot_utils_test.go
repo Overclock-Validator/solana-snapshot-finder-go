@@ -68,7 +68,7 @@ func TestExtractIncrementalSnapshotSlots_NegativeNumbers(t *testing.T) {
 }
 
 // -----------------------------
-// findRecentFullSnapshot tests (error / edge)
+// FindRecentFullSnapshot tests (error / edge)
 // -----------------------------
 func TestFindRecentFullSnapshot_NoDirs(t *testing.T) {
 	// Use a temp file path instead of directory to force os.ReadDir error
@@ -79,7 +79,7 @@ func TestFindRecentFullSnapshot_NoDirs(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	_, _, err := findRecentFullSnapshot(f, 0, 0)
+	_, _, err := FindRecentFullSnapshot(f, 0, 0)
 	if err == nil {
 		t.Fatalf("expected error when path is not a directory, got nil")
 	}
@@ -88,7 +88,7 @@ func TestFindRecentFullSnapshot_NoDirs(t *testing.T) {
 func TestFindRecentFullSnapshot_Empty(t *testing.T) {
 	dir := t.TempDir()
 	// empty dir should result in "no full snapshots found" error
-	_, _, err := findRecentFullSnapshot(dir, 0, 0)
+	_, _, err := FindRecentFullSnapshot(dir, 0, 0)
 	if err == nil {
 		t.Fatalf("expected error for no snapshots found, got nil")
 	}
@@ -99,7 +99,7 @@ func TestFindRecentFullSnapshot_NoMatchingFiles(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "file.txt"), []byte("a"), 0o644)
 	writeFile(t, filepath.Join(dir, "remote", "another.json"), []byte("b"), 0o644)
 
-	_, _, err := findRecentFullSnapshot(dir, 0, 0)
+	_, _, err := FindRecentFullSnapshot(dir, 0, 0)
 	if err == nil {
 		t.Fatalf("expected error for no matching snapshot files, got nil")
 	}
@@ -112,7 +112,7 @@ func TestFindRecentFullSnapshot_MultipleSelection(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "snapshot-200-b.tar.bz2"), []byte("b"), 0o644)
 	writeFile(t, filepath.Join(dir, "remote", "snapshot-150-c.tar.zst"), []byte("c"), 0o644)
 
-	most, slot, err := findRecentFullSnapshot(dir, 0, 0)
+	most, slot, err := FindRecentFullSnapshot(dir, 0, 0)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestFindRecentFullSnapshot_RemoteOnly(t *testing.T) {
 
 	writeFile(t, filepath.Join(dir, "remote", "snapshot-999-r.tar.zst"), []byte("r"), 0o644)
 
-	most, slot, err := findRecentFullSnapshot(dir, 0, 0)
+	most, slot, err := FindRecentFullSnapshot(dir, 0, 0)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
