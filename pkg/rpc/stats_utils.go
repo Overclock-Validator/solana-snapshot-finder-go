@@ -223,7 +223,7 @@ func (s *ProbeStats) PrintReport(cfg FilterConfig) {
 
 	// RTT Histogram
 	log.Printf("%s┌─────────────────────────────────────────────────────────────────┐%s\n", c, r)
-	log.Printf("%s│%s RTT HISTOGRAM (milliseconds)                                    %s│%s\n", c, r, c, r)
+	log.Printf("%s│%s RTT Distance Histogram (milliseconds)                           %s│%s\n", c, r, c, r)
 	log.Printf("%s├─────────────────────────────────────────────────────────────────┤%s\n", c, r)
 	s.printHistogramBar("0-100", atomic.LoadInt64(&s.RTT0To100), s.TotalNodes, c, r)
 	s.printHistogramBar("100-200", atomic.LoadInt64(&s.RTT100To200), s.TotalNodes, c, r)
