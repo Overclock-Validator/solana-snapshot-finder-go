@@ -252,7 +252,7 @@ func (s *ProbeStats) PrintReport(cfg FilterConfig) {
 	log.Println("┌─────────────────────────────────────────────────────────────────┐")
 	log.Println("│ FILTER PIPELINE                                                 │")
 	log.Println("├─────────────────────────────────────────────────────────────────┤")
-	log.Printf("│ Initial (with snapshots):              %-25d│\n", s.InitialWithSnapshots)
+	s.printFilterRow("Initial (with snapshots)", s.InitialWithSnapshots, 0)
 
 	if cfg.MinVersion != "" || len(cfg.AllowedVersions) > 0 {
 		versionDesc := cfg.MinVersion
@@ -260,9 +260,8 @@ func (s *ProbeStats) PrintReport(cfg FilterConfig) {
 			versionDesc = fmt.Sprintf("[%s]", strings.Join(cfg.AllowedVersions, ", "))
 		}
 		filtered := s.InitialWithSnapshots - s.AfterVersionFilter
-		log.Printf("│ After version filter (%s): %d (-%d)%s│\n",
-			versionDesc, s.AfterVersionFilter, filtered,
-			strings.Repeat(" ", 28-len(versionDesc)-len(fmt.Sprintf("%d", s.AfterVersionFilter))-len(fmt.Sprintf("%d", filtered))))
+		label := fmt.Sprintf("After version filter (%s)", versionDesc)
+		s.printFilterRow(label, s.AfterVersionFilter, filtered)
 	}
 
 	if cfg.MaxRTTMs > 0 {
@@ -270,9 +269,8 @@ func (s *ProbeStats) PrintReport(cfg FilterConfig) {
 		if s.AfterVersionFilter == 0 {
 			filtered = s.InitialWithSnapshots - s.AfterRTTFilter
 		}
-		log.Printf("│ After RTT filter (%dms):              %d (-%d)%s│\n",
-			cfg.MaxRTTMs, s.AfterRTTFilter, filtered,
-			strings.Repeat(" ", 20-len(fmt.Sprintf("%d", cfg.MaxRTTMs))-len(fmt.Sprintf("%d", s.AfterRTTFilter))-len(fmt.Sprintf("%d", filtered))))
+		label := fmt.Sprintf("After RTT filter (%dms)", cfg.MaxRTTMs)
+		s.printFilterRow(label, s.AfterRTTFilter, filtered)
 	}
 
 	prevCount := s.AfterRTTFilter
@@ -283,16 +281,14 @@ func (s *ProbeStats) PrintReport(cfg FilterConfig) {
 		prevCount = s.InitialWithSnapshots
 	}
 	filtered := prevCount - s.AfterFullAgeFilter
-	log.Printf("│ After full_threshold (%d slots):   %d (-%d)%s│\n",
-		cfg.FullThreshold, s.AfterFullAgeFilter, filtered,
-		strings.Repeat(" ", 25-len(fmt.Sprintf("%d", cfg.FullThreshold))-len(fmt.Sprintf("%d", s.AfterFullAgeFilter))-len(fmt.Sprintf("%d", filtered))))
+	label := fmt.Sprintf("After full_threshold (%d slots)", cfg.FullThreshold)
+	s.printFilterRow(label, s.AfterFullAgeFilter, filtered)
 
 	filtered = s.AfterFullAgeFilter - s.AfterIncAgeFilter
-	log.Printf("│ After inc_threshold (%d slots):    %d (-%d)%s│\n",
-		cfg.IncThreshold, s.AfterIncAgeFilter, filtered,
-		strings.Repeat(" ", 25-len(fmt.Sprintf("%d", cfg.IncThreshold))-len(fmt.Sprintf("%d", s.AfterIncAgeFilter))-len(fmt.Sprintf("%d", filtered))))
+	label = fmt.Sprintf("After inc_threshold (%d slots)", cfg.IncThreshold)
+	s.printFilterRow(label, s.AfterIncAgeFilter, filtered)
 
-	log.Printf("│ Eligible for speed testing:            %-25d│\n", atomic.LoadInt64(&s.Eligible))
+	s.printFilterRow("Eligible for speed testing", atomic.LoadInt64(&s.Eligible), 0)
 	log.Println("└─────────────────────────────────────────────────────────────────┘")
 	log.Println("")
 }
@@ -313,7 +309,41 @@ func (s *ProbeStats) printHistogramBar(label string, count int64, total int64) {
 		paddedLabel = paddedLabel[:10]
 	}
 
-	log.Printf("│ %s %s %5d (%5.1f%%) │\n", paddedLabel, bar, count, pct)
+	log.Printf("│ %s %s %5d (%5.1f%%)      │\n", paddedLabel, bar, count, pct)
+}
+
+// printFilterRow prints a row for the filter pipeline section
+// If filtered is 0, it shows just the count; otherwise shows "count (-filtered)"
+func (s *ProbeStats) printFilterRow(label string, count int64, filtered int64) {
+	// Box inner width is 65 chars (between the │ borders)
+	// Format: "│ " + label + value_part + " │"
+	// So content area is 63 chars (65 - 2 for "│ " and " │" at the end is wrong, let me recalculate)
+	// Actually: "│ " (2) + content (63) + "│" (1) = 66 chars, but box is 67 including both borders
+	// Border line has 65 dashes, so inner content is 65 chars
+	// Format: "│" (1) + " " (1) + content (62) + " " (1) + "│" (1) = 66? Let me just use fixed format
+
+	const innerWidth = 63 // Usable content width between "│ " and " │"
+
+	var valueStr string
+	if filtered == 0 {
+		valueStr = fmt.Sprintf("%d", count)
+	} else {
+		valueStr = fmt.Sprintf("%d (-%d)", count, filtered)
+	}
+
+	// Truncate label if too long
+	maxLabelLen := innerWidth - len(valueStr) - 1 // -1 for at least one space
+	if len(label) > maxLabelLen {
+		label = label[:maxLabelLen]
+	}
+
+	// Calculate padding to right-align value
+	padding := innerWidth - len(label) - len(valueStr)
+	if padding < 1 {
+		padding = 1
+	}
+
+	log.Printf("│ %s%s%s │\n", label, strings.Repeat(" ", padding), valueStr)
 }
 
 func max(a, b int64) int64 {
