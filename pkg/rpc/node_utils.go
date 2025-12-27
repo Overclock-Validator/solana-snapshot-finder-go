@@ -806,9 +806,11 @@ func stage1Triage(ctx context.Context, candidates []NodeResult, cfg config.Confi
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
-	log.Printf("  Stage 1 config: conc=%d warmup=%dKiB window=%dKiB×%d timeout=%dms",
-		concurrency, cfg.Stage1WarmKiB, cfg.Stage1WindowKiB, cfg.Stage1Windows, cfg.Stage1TimeoutMS)
-	log.Printf("  Stage 1 input: %d candidates", len(candidates))
+	if !cfg.Quiet {
+		log.Printf("  Stage 1 config: conc=%d warmup=%dKiB window=%dKiB×%d timeout=%dms",
+			concurrency, cfg.Stage1WarmKiB, cfg.Stage1WindowKiB, cfg.Stage1Windows, cfg.Stage1TimeoutMS)
+		log.Printf("  Stage 1 input: %d candidates", len(candidates))
+	}
 
 	var tested int64
 	for _, cand := range candidates {
@@ -870,8 +872,10 @@ func stage1Triage(ctx context.Context, candidates []NodeResult, cfg config.Confi
 		return ranked[i].S1.MinMBs > ranked[j].S1.MinMBs
 	})
 
-	log.Printf("  Stage 1 result: tested=%d passed=%d timeouts=%d errors=%d",
-		tested, len(ranked), timeouts, errorsOnly)
+	if !cfg.Quiet {
+		log.Printf("  Stage 1 result: tested=%d passed=%d timeouts=%d errors=%d",
+			tested, len(ranked), timeouts, errorsOnly)
+	}
 
 	return ranked
 }
@@ -1013,9 +1017,11 @@ func stage2Confirm(ctx context.Context, ranked []RankedNode, cfg config.Config, 
 		top = top[:cfg.Stage2TopK]
 	}
 
-	log.Printf("  Stage 2 config: warm=%ds measure=%ds minRatio=%.2f minAbs=%.1fMB/s",
-		cfg.Stage2WarmSec, cfg.Stage2MeasureSec, cfg.Stage2MinRatio, cfg.Stage2MinAbsMBs)
-	log.Printf("  Stage 2 input: %d candidates (top %d from Stage 1, tested sequentially)", len(top), cfg.Stage2TopK)
+	if !cfg.Quiet {
+		log.Printf("  Stage 2 config: warm=%ds measure=%ds minRatio=%.2f minAbs=%.1fMB/s",
+			cfg.Stage2WarmSec, cfg.Stage2MeasureSec, cfg.Stage2MinRatio, cfg.Stage2MinAbsMBs)
+		log.Printf("  Stage 2 input: %d candidates (top %d from Stage 1, tested sequentially)", len(top), cfg.Stage2TopK)
+	}
 
 	// Run tests sequentially (concurrency=1) for accurate speed measurements on home internet
 	sem := make(chan struct{}, 1)
@@ -1080,8 +1086,10 @@ func stage2Confirm(ctx context.Context, ranked []RankedNode, cfg config.Config, 
 	wg.Wait()
 
 	otherErrors := int(tested) - len(out) - int(collapsed) - int(timeouts) - int(connFails)
-	log.Printf("  Stage 2 result: tested=%d passed=%d collapsed=%d timeouts=%d conn_fails=%d errors=%d",
-		tested, len(out), collapsed, timeouts, connFails, otherErrors)
+	if !cfg.Quiet {
+		log.Printf("  Stage 2 result: tested=%d passed=%d collapsed=%d timeouts=%d conn_fails=%d errors=%d",
+			tested, len(out), collapsed, timeouts, connFails, otherErrors)
+	}
 
 	// Sort by Stage 2 minimum speed (highest min first) - min speed is more representative of sustained throughput
 	sort.Slice(out, func(i, j int) bool {
@@ -1089,7 +1097,7 @@ func stage2Confirm(ctx context.Context, ranked []RankedNode, cfg config.Config, 
 	})
 
 	// Log detailed info for each passing node (helps identify problematic sources)
-	if len(out) > 0 {
+	if len(out) > 0 && !cfg.Quiet {
 		log.Printf("  Stage 2 candidates (sorted by min speed):")
 		for i, r := range out {
 			// Calculate distance from current slot to full snapshot slot
@@ -1238,13 +1246,15 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 
 	// Fallback to Stage 1 results if Stage 2 fails completely
 	if len(final) == 0 {
-		log.Println("  Stage 2 failed completely - falling back to Stage 1 results")
+		if !cfg.Quiet {
+			log.Println("  Stage 2 failed completely - falling back to Stage 1 results")
+		}
 		// Use Stage 1 results directly (already sorted by median speed)
 		var rpcs []string
 		for _, r := range ranked {
 			rpcs = append(rpcs, r.Result.RPC)
 		}
-		if len(rpcs) > 0 {
+		if len(rpcs) > 0 && !cfg.Quiet {
 			log.Printf("=== Selection Complete (Stage 1 Fallback) ===")
 			log.Printf("  Selected: %s (v%s)", rpcs[0], ranked[0].Result.Version)
 			log.Printf("  Stage 1 median: %.2f MB/s", ranked[0].S1.MedianMBs)
@@ -1259,12 +1269,14 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 		nodes = append(nodes, r.Result.RPC)
 	}
 
-	log.Printf("=== Selection Complete ===")
-	log.Printf("  Selected: %s (v%s)", nodes[0], final[0].Result.Version)
-	log.Printf("  Stage 1 median: %.2f MB/s", final[0].S1.MedianMBs)
-	log.Printf("  Stage 2 avg: %.2f MB/s (min: %.2f, max: %.2f)",
-		final[0].S2.AvgMBs, final[0].S2.MinMBs, final[0].S2.MaxMBs)
-	log.Printf("  Total candidates: %d", len(nodes))
+	if !cfg.Quiet {
+		log.Printf("=== Selection Complete ===")
+		log.Printf("  Selected: %s (v%s)", nodes[0], final[0].Result.Version)
+		log.Printf("  Stage 1 median: %.2f MB/s", final[0].S1.MedianMBs)
+		log.Printf("  Stage 2 avg: %.2f MB/s (min: %.2f, max: %.2f)",
+			final[0].S2.AvgMBs, final[0].S2.MinMBs, final[0].S2.MaxMBs)
+		log.Printf("  Total candidates: %d", len(nodes))
+	}
 
 	return nodes
 }
@@ -1365,12 +1377,14 @@ func SortBestNodesWithStats(results []NodeResult, cfg config.Config, stats *Prob
 
 	// Fallback to Stage 1 results if Stage 2 fails completely
 	if len(final) == 0 {
-		log.Println("  Stage 2 failed completely - falling back to Stage 1 results")
+		if !cfg.Quiet {
+			log.Println("  Stage 2 failed completely - falling back to Stage 1 results")
+		}
 		var rpcs []string
 		for _, r := range ranked {
 			rpcs = append(rpcs, r.Result.RPC)
 		}
-		if len(rpcs) > 0 {
+		if len(rpcs) > 0 && !cfg.Quiet {
 			log.Printf("=== Selection Complete (Stage 1 Fallback) ===")
 			log.Printf("  Selected: %s (v%s)", rpcs[0], ranked[0].Result.Version)
 			log.Printf("  Stage 1 median: %.2f MB/s", ranked[0].S1.MedianMBs)
@@ -1385,12 +1399,14 @@ func SortBestNodesWithStats(results []NodeResult, cfg config.Config, stats *Prob
 		nodes = append(nodes, r.Result.RPC)
 	}
 
-	log.Printf("=== Selection Complete ===")
-	log.Printf("  Selected: %s (v%s)", nodes[0], final[0].Result.Version)
-	log.Printf("  Stage 1 median: %.2f MB/s", final[0].S1.MedianMBs)
-	log.Printf("  Stage 2 avg: %.2f MB/s (min: %.2f, max: %.2f)",
-		final[0].S2.AvgMBs, final[0].S2.MinMBs, final[0].S2.MaxMBs)
-	log.Printf("  Total candidates: %d", len(nodes))
+	if !cfg.Quiet {
+		log.Printf("=== Selection Complete ===")
+		log.Printf("  Selected: %s (v%s)", nodes[0], final[0].Result.Version)
+		log.Printf("  Stage 1 median: %.2f MB/s", final[0].S1.MedianMBs)
+		log.Printf("  Stage 2 avg: %.2f MB/s (min: %.2f, max: %.2f)",
+			final[0].S2.AvgMBs, final[0].S2.MinMBs, final[0].S2.MaxMBs)
+		log.Printf("  Total candidates: %d", len(nodes))
+	}
 
 	return nodes, final
 }

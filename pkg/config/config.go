@@ -48,6 +48,9 @@ type Config struct {
 
 	// Safety margin for expiration warnings
 	SafetyMarginSlots int `mapstructure:"safety_margin_slots"` // Slots before expiration to trigger warnings (default: 2000). Uses full_threshold as validity window.
+
+	// Logging control
+	Quiet bool `mapstructure:"quiet"` // Suppress stage 1/2 detailed logging (default: false)
 }
 
 func LoadConfig(configPath string) (Config, error) {
@@ -103,6 +106,9 @@ func LoadConfig(configPath string) (Config, error) {
 
 	// Safety margin defaults (uses full_threshold as validity window)
 	viper.SetDefault("safety_margin_slots", 2000) // Warn when 2000 slots from expiration
+
+	// Logging control defaults
+	viper.SetDefault("quiet", false) // Show detailed stage logging by default
 
 	// Read the config
 	err := viper.ReadInConfig()
