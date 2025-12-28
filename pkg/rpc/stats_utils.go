@@ -597,11 +597,12 @@ type RankedNodeInfo struct {
 	Rank    int
 	RPC     string
 	Version string
+	RTTMs   int     // RTT in milliseconds
 	SpeedS1 float64 // Stage 1 median speed
 	SpeedS2 float64 // Stage 2 min speed (0 if not tested)
 }
 
-// PrintStage2CandidatesTable prints the Stage 2 candidates in a table format (no timestamps)
+// PrintStage2CandidatesTable prints the staged speed candidates in a table format (no timestamps)
 // Box width = 73 chars to match Mithril banner
 func PrintStage2CandidatesTable(candidates []RankedNodeInfo) {
 	if len(candidates) == 0 {
@@ -621,22 +622,22 @@ func PrintStage2CandidatesTable(candidates []RankedNodeInfo) {
 	p := " "
 
 	fmt.Println()
-	fmt.Printf("%s%s┌───────────────────────────────────────────────────────────────────────┐%s\n", p, c, r)
-	fmt.Printf("%s%s│%s STAGE 2 CANDIDATES (top %d by speed)                                   %s│%s\n", p, c, r, len(candidates), c, r)
-	fmt.Printf("%s%s├────┬──────────────────────────────┬──────────┬────────────────────────┤%s\n", p, c, r)
-	fmt.Printf("%s%s│%s #  │ Node IP                      │ Version  │ Speed (MB/s)           %s│%s\n", p, c, r, c, r)
-	fmt.Printf("%s%s├────┼──────────────────────────────┼──────────┼────────────────────────┤%s\n", p, c, r)
+	fmt.Printf("%s%s┌────┬────────────────────────┬─────────┬───────┬───────────────────────┐%s\n", p, c, r)
+	fmt.Printf("%s%s│%s STAGED SPEED CANDIDATES (top %d by speed)                            %s│%s\n", p, c, r, len(candidates), c, r)
+	fmt.Printf("%s%s├────┼────────────────────────┼─────────┼───────┼───────────────────────┤%s\n", p, c, r)
+	fmt.Printf("%s%s│%s #  │ Node IP                │ Version │ RTT   │ Speed (MB/s)          %s│%s\n", p, c, r, c, r)
+	fmt.Printf("%s%s├────┼────────────────────────┼─────────┼───────┼───────────────────────┤%s\n", p, c, r)
 
 	for _, node := range candidates {
-		// Truncate IP to fit column (28 chars)
+		// Truncate IP to fit column (22 chars)
 		ip := node.RPC
-		if len(ip) > 28 {
-			ip = ip[:25] + "..."
+		if len(ip) > 22 {
+			ip = ip[:19] + "..."
 		}
-		// Truncate version to fit
+		// Truncate version to fit (7 chars)
 		version := node.Version
-		if len(version) > 8 {
-			version = version[:8]
+		if len(version) > 7 {
+			version = version[:7]
 		}
 
 		// Show S2 speed if available, otherwise S1
@@ -647,11 +648,14 @@ func PrintStage2CandidatesTable(candidates []RankedNodeInfo) {
 			speedLabel = "S1"
 		}
 
-		// Column 4 = 24 chars: 1 space + 6.1f(6) + " ("(2) + label(2) + ")"(1) + 12 spaces = 24
-		fmt.Printf("%s%s│%s %-2d │ %-28s │ %-8s │ %6.1f (%s)            %s│%s\n",
-			p, c, r, node.Rank, ip, version, speed, speedLabel, c, r)
+		// Format RTT
+		rttStr := fmt.Sprintf("%d", node.RTTMs)
+
+		// Columns: # (4) + Node IP (24) + Version (9) + RTT (7) + Speed (23) = 67 inner + 6 borders = 73
+		fmt.Printf("%s%s│%s %-2d │ %-22s │ %-7s │ %5s │ %6.1f (%s)          %s│%s\n",
+			p, c, r, node.Rank, ip, version, rttStr, speed, speedLabel, c, r)
 	}
 
-	fmt.Printf("%s%s└────┴──────────────────────────────┴──────────┴────────────────────────┘%s\n", p, c, r)
+	fmt.Printf("%s%s└────┴────────────────────────┴─────────┴───────┴───────────────────────┘%s\n", p, c, r)
 	fmt.Println()
 }
