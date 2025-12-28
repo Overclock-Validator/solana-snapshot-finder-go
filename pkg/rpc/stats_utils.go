@@ -2,15 +2,32 @@ package rpc
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/term"
 )
+
+var programStartTime = time.Now()
+
+// logf prints with relative timestamp from program start
+func logf(format string, args ...interface{}) {
+	elapsed := time.Since(programStartTime).Seconds()
+	prefix := fmt.Sprintf("(+%6.1fs) ", elapsed)
+	fmt.Printf(prefix+format, args...)
+}
+
+// logln prints a newline with relative timestamp
+func logln(args ...interface{}) {
+	elapsed := time.Since(programStartTime).Seconds()
+	prefix := fmt.Sprintf("(+%6.1fs) ", elapsed)
+	fmt.Print(prefix)
+	fmt.Println(args...)
+}
 
 // ANSI color codes for terminal output
 const (
@@ -202,74 +219,74 @@ func (s *ProbeStats) PrintReport(cfg FilterConfig) {
 	}
 
 	// Header
-	log.Println("")
-	log.Printf("%s╔══════════════════════════════════════════════════════════════════╗%s\n", c, r)
-	log.Printf("%s║                    NODE DISCOVERY REPORT                         ║%s\n", c, r)
-	log.Printf("%s╚══════════════════════════════════════════════════════════════════╝%s\n", c, r)
-	log.Println("")
+	logln("")
+	logf("%s╔══════════════════════════════════════════════════════════════════╗%s\n", c, r)
+	logf("%s║                    NODE DISCOVERY REPORT                         ║%s\n", c, r)
+	logf("%s╚══════════════════════════════════════════════════════════════════╝%s\n", c, r)
+	logln("")
 
 	// Probing Summary
-	log.Printf("%s┌─────────────────────────────────────────────────────────────────┐%s\n", c, r)
-	log.Printf("%s│%s PROBING SUMMARY                                                 %s│%s\n", c, r, c, r)
-	log.Printf("%s├─────────────────────────────────────────────────────────────────┤%s\n", c, r)
-	log.Printf("%s│%s Total nodes discovered: %-40d%s│%s\n", c, r, atomic.LoadInt64(&s.TotalNodes), c, r)
-	log.Printf("%s│%s TCP precheck failed:    %-40d%s│%s\n", c, r, atomic.LoadInt64(&s.TCPFailed), c, r)
-	log.Printf("%s│%s With snapshots:         %-40d%s│%s\n", c, r, atomic.LoadInt64(&s.HasAnySnapshot), c, r)
-	log.Printf("%s│%s Without snapshots:      %-40d%s│%s\n", c, r, atomic.LoadInt64(&s.NoSnapshot), c, r)
-	log.Printf("%s│%s Probe timeouts:         %-40d%s│%s\n", c, r, atomic.LoadInt64(&s.ProbeTimeouts), c, r)
-	log.Printf("%s│%s Other probe errors:     %-40d%s│%s\n", c, r, atomic.LoadInt64(&s.ProbeOtherErr), c, r)
-	log.Printf("%s└─────────────────────────────────────────────────────────────────┘%s\n", c, r)
-	log.Println("")
+	logf("%s┌─────────────────────────────────────────────────────────────────┐%s\n", c, r)
+	logf("%s│%s PROBING SUMMARY                                                 %s│%s\n", c, r, c, r)
+	logf("%s├─────────────────────────────────────────────────────────────────┤%s\n", c, r)
+	logf("%s│%s Total nodes discovered: %-40d%s│%s\n", c, r, atomic.LoadInt64(&s.TotalNodes), c, r)
+	logf("%s│%s TCP precheck failed:    %-40d%s│%s\n", c, r, atomic.LoadInt64(&s.TCPFailed), c, r)
+	logf("%s│%s With snapshots:         %-40d%s│%s\n", c, r, atomic.LoadInt64(&s.HasAnySnapshot), c, r)
+	logf("%s│%s Without snapshots:      %-40d%s│%s\n", c, r, atomic.LoadInt64(&s.NoSnapshot), c, r)
+	logf("%s│%s Probe timeouts:         %-40d%s│%s\n", c, r, atomic.LoadInt64(&s.ProbeTimeouts), c, r)
+	logf("%s│%s Other probe errors:     %-40d%s│%s\n", c, r, atomic.LoadInt64(&s.ProbeOtherErr), c, r)
+	logf("%s└─────────────────────────────────────────────────────────────────┘%s\n", c, r)
+	logln("")
 
 	// RTT Histogram
-	log.Printf("%s┌─────────────────────────────────────────────────────────────────┐%s\n", c, r)
-	log.Printf("%s│%s RTT Distance Histogram (milliseconds)                           %s│%s\n", c, r, c, r)
-	log.Printf("%s├─────────────────────────────────────────────────────────────────┤%s\n", c, r)
+	logf("%s┌─────────────────────────────────────────────────────────────────┐%s\n", c, r)
+	logf("%s│%s RTT Distance Histogram (milliseconds)                           %s│%s\n", c, r, c, r)
+	logf("%s├─────────────────────────────────────────────────────────────────┤%s\n", c, r)
 	s.printHistogramBar("0-100", atomic.LoadInt64(&s.RTT0To100), s.TotalNodes, c, r)
 	s.printHistogramBar("100-200", atomic.LoadInt64(&s.RTT100To200), s.TotalNodes, c, r)
 	s.printHistogramBar("200-300", atomic.LoadInt64(&s.RTT200To300), s.TotalNodes, c, r)
 	s.printHistogramBar("300-400", atomic.LoadInt64(&s.RTT300To400), s.TotalNodes, c, r)
 	s.printHistogramBar(">400", atomic.LoadInt64(&s.RTTOver400), s.TotalNodes, c, r)
-	log.Printf("%s└─────────────────────────────────────────────────────────────────┘%s\n", c, r)
-	log.Println("")
+	logf("%s└─────────────────────────────────────────────────────────────────┘%s\n", c, r)
+	logln("")
 
 	// Version Distribution
-	log.Printf("%s┌─────────────────────────────────────────────────────────────────┐%s\n", c, r)
-	log.Printf("%s│%s NODE VERSION DISTRIBUTION (top 10)                              %s│%s\n", c, r, c, r)
-	log.Printf("%s├─────────────────────────────────────────────────────────────────┤%s\n", c, r)
+	logf("%s┌─────────────────────────────────────────────────────────────────┐%s\n", c, r)
+	logf("%s│%s NODE VERSION DISTRIBUTION (top 10)                              %s│%s\n", c, r, c, r)
+	logf("%s├─────────────────────────────────────────────────────────────────┤%s\n", c, r)
 	topVersions := s.getTopVersions(10)
 	for _, v := range topVersions {
 		s.printHistogramBar(v.Version, v.Count, s.HasAnySnapshot, c, r)
 	}
-	log.Printf("%s└─────────────────────────────────────────────────────────────────┘%s\n", c, r)
-	log.Println("")
+	logf("%s└─────────────────────────────────────────────────────────────────┘%s\n", c, r)
+	logln("")
 
 	// Incremental Snapshot Stats
-	log.Printf("%s┌─────────────────────────────────────────────────────────────────┐%s\n", c, r)
-	log.Printf("%s│%s INCREMENTAL SNAPSHOT DISTRIBUTION                               %s│%s\n", c, r, c, r)
-	log.Printf("%s├─────────────────────────────────────────────────────────────────┤%s\n", c, r)
+	logf("%s┌─────────────────────────────────────────────────────────────────┐%s\n", c, r)
+	logf("%s│%s INCREMENTAL SNAPSHOT DISTRIBUTION                               %s│%s\n", c, r, c, r)
+	logf("%s├─────────────────────────────────────────────────────────────────┤%s\n", c, r)
 	withInc := atomic.LoadInt64(&s.WithIncremental)
 	withoutInc := atomic.LoadInt64(&s.WithoutIncremental)
-	log.Printf("%s│%s With incremental:    %-43d%s│%s\n", c, r, withInc, c, r)
-	log.Printf("%s│%s Without incremental: %-43d%s│%s\n", c, r, withoutInc, c, r)
-	log.Printf("%s│%s With usable inc:     %-43d%s│%s\n", c, r, atomic.LoadInt64(&s.WithUsableInc), c, r)
-	log.Printf("%s│%s                                                                 %s│%s\n", c, r, c, r)
-	log.Printf("%s│%s Distance from tip (slots):                                      %s│%s\n", c, r, c, r)
+	logf("%s│%s With incremental:    %-43d%s│%s\n", c, r, withInc, c, r)
+	logf("%s│%s Without incremental: %-43d%s│%s\n", c, r, withoutInc, c, r)
+	logf("%s│%s With usable inc:     %-43d%s│%s\n", c, r, atomic.LoadInt64(&s.WithUsableInc), c, r)
+	logf("%s│%s                                                                 %s│%s\n", c, r, c, r)
+	logf("%s│%s Distance from tip (slots):                                      %s│%s\n", c, r, c, r)
 	s.printHistogramBar("ahead", atomic.LoadInt64(&s.IncAhead), withInc, c, r)
 	if s.MaxAheadSlots > 0 {
-		log.Printf("%s│%s   (max ahead: %d slots)%-42s%s│%s\n", c, r, s.MaxAheadSlots, "", c, r)
+		logf("%s│%s   (max ahead: %d slots)%-42s%s│%s\n", c, r, s.MaxAheadSlots, "", c, r)
 	}
 	s.printHistogramBar("0-100", atomic.LoadInt64(&s.Inc0To100), withInc, c, r)
 	s.printHistogramBar("100-200", atomic.LoadInt64(&s.Inc100To200), withInc, c, r)
 	s.printHistogramBar("200-1000", atomic.LoadInt64(&s.Inc200To1000), withInc, c, r)
 	s.printHistogramBar("1000+", atomic.LoadInt64(&s.Inc1000Plus), withInc, c, r)
-	log.Printf("%s└─────────────────────────────────────────────────────────────────┘%s\n", c, r)
-	log.Println("")
+	logf("%s└─────────────────────────────────────────────────────────────────┘%s\n", c, r)
+	logln("")
 
 	// Filter Pipeline
-	log.Printf("%s┌─────────────────────────────────────────────────────────────────┐%s\n", c, r)
-	log.Printf("%s│%s FILTER PIPELINE                                                 %s│%s\n", c, r, c, r)
-	log.Printf("%s├─────────────────────────────────────────────────────────────────┤%s\n", c, r)
+	logf("%s┌─────────────────────────────────────────────────────────────────┐%s\n", c, r)
+	logf("%s│%s FILTER PIPELINE                                                 %s│%s\n", c, r, c, r)
+	logf("%s├─────────────────────────────────────────────────────────────────┤%s\n", c, r)
 	s.printFilterRow("Initial (with snapshots)", s.InitialWithSnapshots, 0, c, r)
 
 	if cfg.MinVersion != "" || len(cfg.AllowedVersions) > 0 {
@@ -307,8 +324,8 @@ func (s *ProbeStats) PrintReport(cfg FilterConfig) {
 	s.printFilterRow(label, s.AfterIncAgeFilter, filtered, c, r)
 
 	s.printFilterRow("Eligible for speed testing", atomic.LoadInt64(&s.Eligible), 0, c, r)
-	log.Printf("%s└─────────────────────────────────────────────────────────────────┘%s\n", c, r)
-	log.Println("")
+	logf("%s└─────────────────────────────────────────────────────────────────┘%s\n", c, r)
+	logln("")
 }
 
 // printHistogramBar prints a histogram bar for the report
@@ -329,7 +346,7 @@ func (s *ProbeStats) printHistogramBar(label string, count int64, total int64, c
 
 	// Format: │ + label(10) + space + bar(30) + space + count(5) + " (" + pct(5) + "%)" + padding + │
 	// Total inner width should be 65 chars
-	log.Printf("%s│%s %s %s %5d (%5.1f%%)        %s│%s\n", colorStart, colorReset, paddedLabel, bar, count, pct, colorStart, colorReset)
+	logf("%s│%s %s %s %5d (%5.1f%%)        %s│%s\n", colorStart, colorReset, paddedLabel, bar, count, pct, colorStart, colorReset)
 }
 
 // printFilterRow prints a row for the filter pipeline section
@@ -356,7 +373,7 @@ func (s *ProbeStats) printFilterRow(label string, count int64, filtered int64, c
 		padding = 1
 	}
 
-	log.Printf("%s│%s %s%s%s %s│%s\n", colorStart, colorReset, label, strings.Repeat(" ", padding), valueStr, colorStart, colorReset)
+	logf("%s│%s %s%s%s %s│%s\n", colorStart, colorReset, label, strings.Repeat(" ", padding), valueStr, colorStart, colorReset)
 }
 
 func max(a, b int64) int64 {
@@ -402,15 +419,15 @@ func (s *SpeedTestStats) PrintSpeedTestReport() {
 		r = colorReset
 	}
 
-	log.Println("")
-	log.Printf("%s┌─────────────────────────────────────────────────────────────────┐%s\n", c, r)
-	log.Printf("%s│%s SPEED TEST RESULTS                                              %s│%s\n", c, r, c, r)
-	log.Printf("%s├─────────────────────────────────────────────────────────────────┤%s\n", c, r)
-	log.Printf("%s│%s Stage 1 (Fast Triage):                                          %s│%s\n", c, r, c, r)
-	log.Printf("%s│%s   Tested: %-5d  Passed: %-5d  Timeouts: %-5d  Errors: %-5d   %s│%s\n",
+	logln("")
+	logf("%s┌─────────────────────────────────────────────────────────────────┐%s\n", c, r)
+	logf("%s│%s SPEED TEST RESULTS                                              %s│%s\n", c, r, c, r)
+	logf("%s├─────────────────────────────────────────────────────────────────┤%s\n", c, r)
+	logf("%s│%s Stage 1 (Fast Triage):                                          %s│%s\n", c, r, c, r)
+	logf("%s│%s   Tested: %-5d  Passed: %-5d  Timeouts: %-5d  Errors: %-5d   %s│%s\n",
 		c, r, s.Stage1Tested, s.Stage1Passed, s.Stage1Timeouts, s.Stage1Errors, c, r)
-	log.Printf("%s│%s Stage 2 (Confirm):                                              %s│%s\n", c, r, c, r)
-	log.Printf("%s│%s   Tested: %-5d  Passed: %-5d  Collapsed: %-4d  Too slow: %-4d %s│%s\n",
+	logf("%s│%s Stage 2 (Confirm):                                              %s│%s\n", c, r, c, r)
+	logf("%s│%s   Tested: %-5d  Passed: %-5d  Collapsed: %-4d  Too slow: %-4d %s│%s\n",
 		c, r, s.Stage2Tested, s.Stage2Passed, s.Stage2Collapsed, s.Stage2TooSlow, c, r)
-	log.Printf("%s└─────────────────────────────────────────────────────────────────┘%s\n", c, r)
+	logf("%s└─────────────────────────────────────────────────────────────────┘%s\n", c, r)
 }
