@@ -394,8 +394,9 @@ func (s *ProbeStats) printHistogramBar(label string, count int64, total int64, c
 	}
 
 	// Format: space + label(10) + space + bar(32) + space + count(5) + " (" + pct(5) + "%)" + padding
-	// Total inner width = 69 chars (to fit in 73-char box with "│ " and " │")
-	fmt.Printf("%s│%s %s %s %5d (%5.1f%%)      %s│%s\n", colorStart, colorReset, paddedLabel, bar, count, pct, colorStart, colorReset)
+	// Total inner width = 71 chars (to fit in 73-char box with │ on each side)
+	// 1 + 10 + 1 + 32 + 1 + 5 + 2 + 5 + 2 + 12 = 71
+	fmt.Printf("%s│%s %s %s %5d (%5.1f%%)            %s│%s\n", colorStart, colorReset, paddedLabel, bar, count, pct, colorStart, colorReset)
 }
 
 // printFilterRow prints a row for the filter pipeline section (no timestamp)
@@ -511,9 +512,9 @@ func PrintStage2CandidatesTable(candidates []RankedNodeInfo) {
 	fmt.Println()
 	fmt.Printf("%s┌───────────────────────────────────────────────────────────────────────┐%s\n", c, r)
 	fmt.Printf("%s│%s STAGE 2 CANDIDATES (top %d by speed)                                   %s│%s\n", c, r, len(candidates), c, r)
-	fmt.Printf("%s├────┬──────────────────────────────┬──────────┬──────────────────────┤%s\n", c, r)
-	fmt.Printf("%s│%s #  │ Node IP                      │ Version  │ Speed (MB/s)         %s│%s\n", c, r, c, r)
-	fmt.Printf("%s├────┼──────────────────────────────┼──────────┼──────────────────────┤%s\n", c, r)
+	fmt.Printf("%s├────┬──────────────────────────────┬──────────┬────────────────────────┤%s\n", c, r)
+	fmt.Printf("%s│%s #  │ Node IP                      │ Version  │ Speed (MB/s)           %s│%s\n", c, r, c, r)
+	fmt.Printf("%s├────┼──────────────────────────────┼──────────┼────────────────────────┤%s\n", c, r)
 
 	for _, node := range candidates {
 		// Truncate IP to fit column (28 chars)
@@ -535,10 +536,11 @@ func PrintStage2CandidatesTable(candidates []RankedNodeInfo) {
 			speedLabel = "S1"
 		}
 
-		fmt.Printf("%s│%s %-2d │ %-28s │ %-8s │ %6.1f (%s)         %s│%s\n",
+		// Column 4 = 24 chars: 1 space + 6.1f(6) + " ("(2) + label(2) + ")"(1) + 12 spaces = 24
+		fmt.Printf("%s│%s %-2d │ %-28s │ %-8s │ %6.1f (%s)            %s│%s\n",
 			c, r, node.Rank, ip, version, speed, speedLabel, c, r)
 	}
 
-	fmt.Printf("%s└────┴──────────────────────────────┴──────────┴──────────────────────┘%s\n", c, r)
+	fmt.Printf("%s└────┴──────────────────────────────┴──────────┴────────────────────────┘%s\n", c, r)
 	fmt.Println()
 }
