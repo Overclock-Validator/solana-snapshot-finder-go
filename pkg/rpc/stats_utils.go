@@ -459,6 +459,93 @@ type SpeedTestStats struct {
 	Stage2Errors    int64
 }
 
+// WriteSpeedTestLog writes detailed speed test statistics to a log file
+// The file is created in the specified directory with a timestamped name
+func (s *SpeedTestStats) WriteSpeedTestLog(logDir string, cfg FilterConfig) error {
+	if s == nil {
+		return nil
+	}
+
+	// Create log directory if it doesn't exist
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("failed to create log directory: %w", err)
+	}
+
+	// Create log file with timestamp
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	logPath := fmt.Sprintf("%s/snapshot-search-%s.log", logDir, timestamp)
+	file, err := os.Create(logPath)
+	if err != nil {
+		return fmt.Errorf("failed to create log file: %w", err)
+	}
+	defer file.Close()
+
+	// Write header
+	fmt.Fprintf(file, "=== Snapshot Source Search Log ===\n")
+	fmt.Fprintf(file, "Generated: %s\n\n", time.Now().Format(time.RFC3339))
+
+	// Write filter configuration
+	fmt.Fprintf(file, "=== Filter Configuration ===\n")
+	if cfg.MinVersion != "" {
+		fmt.Fprintf(file, "Minimum Version: %s\n", cfg.MinVersion)
+	}
+	if len(cfg.AllowedVersions) > 0 {
+		fmt.Fprintf(file, "Allowed Versions: %v\n", cfg.AllowedVersions)
+	}
+	if cfg.MaxRTTMs > 0 {
+		fmt.Fprintf(file, "Max RTT: %d ms\n", cfg.MaxRTTMs)
+	}
+	fmt.Fprintf(file, "Full Threshold: %d slots\n", cfg.FullThreshold)
+	fmt.Fprintf(file, "Incremental Threshold: %d slots\n\n", cfg.IncThreshold)
+
+	// Write Stage 1 details
+	fmt.Fprintf(file, "=== Stage 1: Fast Triage ===\n")
+	fmt.Fprintf(file, "Tested:   %d nodes\n", s.Stage1Tested)
+	fmt.Fprintf(file, "Passed:   %d nodes\n", s.Stage1Passed)
+	fmt.Fprintf(file, "Filtered: %d nodes\n", s.Stage1Tested-s.Stage1Passed)
+	fmt.Fprintf(file, "\nBreakdown of filtered nodes:\n")
+	fmt.Fprintf(file, "  Timeouts:     %d (%.1f%%)\n", s.Stage1Timeouts, pct(s.Stage1Timeouts, s.Stage1Tested))
+	fmt.Fprintf(file, "  Errors:       %d (%.1f%%)\n", s.Stage1Errors, pct(s.Stage1Errors, s.Stage1Tested))
+	s1ZeroSpeed := s.Stage1Tested - s.Stage1Passed - s.Stage1Timeouts - s.Stage1Errors
+	if s1ZeroSpeed < 0 {
+		s1ZeroSpeed = 0
+	}
+	fmt.Fprintf(file, "  Zero speed:   %d (%.1f%%)\n\n", s1ZeroSpeed, pct(s1ZeroSpeed, s.Stage1Tested))
+
+	// Write Stage 2 details
+	fmt.Fprintf(file, "=== Stage 2: Sustained Speed Test ===\n")
+	fmt.Fprintf(file, "Tested:   %d nodes\n", s.Stage2Tested)
+	fmt.Fprintf(file, "Passed:   %d nodes\n", s.Stage2Passed)
+	fmt.Fprintf(file, "Filtered: %d nodes\n", s.Stage2Tested-s.Stage2Passed)
+	fmt.Fprintf(file, "\nBreakdown of filtered nodes:\n")
+	fmt.Fprintf(file, "  Collapsed (unstable speed): %d (%.1f%%)\n", s.Stage2Collapsed, pct(s.Stage2Collapsed, s.Stage2Tested))
+	fmt.Fprintf(file, "  Below min speed:            %d (%.1f%%)\n", s.Stage2TooSlow, pct(s.Stage2TooSlow, s.Stage2Tested))
+	fmt.Fprintf(file, "  Errors/Connection fails:    %d (%.1f%%)\n", s.Stage2Errors, pct(s.Stage2Errors, s.Stage2Tested))
+
+	// Calculate Stage 2 timeouts (not explicitly tracked, estimate from difference)
+	s2Other := s.Stage2Tested - s.Stage2Passed - s.Stage2Collapsed - s.Stage2TooSlow - s.Stage2Errors
+	if s2Other > 0 {
+		fmt.Fprintf(file, "  Timeouts/Other:             %d (%.1f%%)\n", s2Other, pct(s2Other, s.Stage2Tested))
+	}
+
+	fmt.Fprintf(file, "\n=== Summary ===\n")
+	fmt.Fprintf(file, "Total input to speed testing: %d nodes\n", s.Stage1Tested)
+	fmt.Fprintf(file, "Final candidates after all filtering: %d nodes\n", s.Stage2Passed)
+	totalFiltered := s.Stage1Tested - s.Stage2Passed
+	fmt.Fprintf(file, "Total filtered out: %d nodes (%.1f%%)\n", totalFiltered, pct(totalFiltered, s.Stage1Tested))
+
+	Logf("Detailed speed test log written to: %s", logPath)
+	return nil
+}
+
+// pct calculates percentage, handling divide by zero
+func pct(part, total int64) float64 {
+	if total == 0 {
+		return 0
+	}
+	return float64(part) / float64(total) * 100
+}
+
 // PrintSpeedTestReport prints a formatted speed test statistics report (no timestamps)
 // Box width = 73 chars to match Mithril banner
 func (s *SpeedTestStats) PrintSpeedTestReport() {

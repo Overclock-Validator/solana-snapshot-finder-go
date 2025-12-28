@@ -102,7 +102,7 @@ func processSnapshots(ctx context.Context, cfg config.Config, state *DownloadSta
 	rpc.DumpGoodAndSlowNodesToFile(results, outputFile)
 
 	// Select best snapshot source using two-stage speed sampling with stats tracking
-	sortedNodes, rankedNodes := rpc.SortBestNodesWithStats(results, cfg, stats, referenceSlot)
+	sortedNodes, rankedNodes, speedStats := rpc.SortBestNodesWithStats(results, cfg, stats, referenceSlot)
 
 	// Print comprehensive node discovery report
 	filterCfg := rpc.FilterConfig{
@@ -112,7 +112,8 @@ func processSnapshots(ctx context.Context, cfg config.Config, state *DownloadSta
 		MinVersion:      cfg.MinNodeVersion,
 		AllowedVersions: cfg.AllowedNodeVersions,
 	}
-	stats.PrintReport(filterCfg)
+	stats.PrintNodeDiscoveryReport()
+	stats.PrintFilterPipeline(filterCfg, speedStats)
 
 	if len(sortedNodes) == 0 {
 		log.Fatal("No suitable snapshot sources found.")

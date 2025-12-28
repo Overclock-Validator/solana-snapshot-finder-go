@@ -787,7 +787,8 @@ func fastDiscardSample(ctx context.Context, urlStr string, cfg config.Config) Fa
 }
 
 // stage1Triage performs Stage 1 fast triage on all candidates
-func stage1Triage(ctx context.Context, candidates []NodeResult, cfg config.Config) []RankedNode {
+// Returns ranked nodes and populates speedStats if provided
+func stage1Triage(ctx context.Context, candidates []NodeResult, cfg config.Config, speedStats *SpeedTestStats) []RankedNode {
 	type item struct {
 		result NodeResult
 		sample FastSample
@@ -870,6 +871,14 @@ func stage1Triage(ctx context.Context, candidates []NodeResult, cfg config.Confi
 	sort.Slice(ranked, func(i, j int) bool {
 		return ranked[i].S1.MinMBs > ranked[j].S1.MinMBs
 	})
+
+	// Populate speed stats if provided
+	if speedStats != nil {
+		speedStats.Stage1Tested = tested
+		speedStats.Stage1Passed = int64(len(ranked))
+		speedStats.Stage1Timeouts = int64(timeouts)
+		speedStats.Stage1Errors = int64(errorsOnly)
+	}
 
 	if !cfg.Quiet {
 		Logf("  Stage 1 result: tested=%d passed=%d timeouts=%d errors=%d",
@@ -1009,7 +1018,8 @@ func stage2Sample(ctx context.Context, urlStr string, cfg config.Config) Stage2S
 
 // stage2Confirm performs Stage 2 confirmation on top candidates from Stage 1
 // currentSlot is used to calculate fresh slot diff for logging
-func stage2Confirm(ctx context.Context, ranked []RankedNode, cfg config.Config, currentSlot int) []RankedNode {
+// Populates speedStats if provided
+func stage2Confirm(ctx context.Context, ranked []RankedNode, cfg config.Config, currentSlot int, speedStats *SpeedTestStats) []RankedNode {
 	// Take top K from stage 1
 	top := ranked
 	if cfg.Stage2TopK > 0 && len(top) > cfg.Stage2TopK {
@@ -1085,6 +1095,16 @@ func stage2Confirm(ctx context.Context, ranked []RankedNode, cfg config.Config, 
 	wg.Wait()
 
 	otherErrors := int(tested) - len(out) - int(collapsed) - int(timeouts) - int(connFails)
+
+	// Populate speed stats if provided
+	if speedStats != nil {
+		speedStats.Stage2Tested = tested
+		speedStats.Stage2Passed = int64(len(out))
+		speedStats.Stage2Collapsed = collapsed
+		speedStats.Stage2TooSlow = 0 // Already counted in collapsed
+		speedStats.Stage2Errors = int64(otherErrors) + connFails
+	}
+
 	if !cfg.Quiet {
 		Logf("  Stage 2 result: tested=%d passed=%d collapsed=%d timeouts=%d conn_fails=%d errors=%d",
 			tested, len(out), collapsed, timeouts, connFails, otherErrors)
@@ -1233,7 +1253,7 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 
 	// Stage 1: Fast triage download speed test
 	ctx := context.Background()
-	ranked := stage1Triage(ctx, eligible, cfg)
+	ranked := stage1Triage(ctx, eligible, cfg, nil)
 
 	if len(ranked) == 0 {
 		Logln("No nodes passed Stage 1 speed sampling")
@@ -1241,7 +1261,7 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 	}
 
 	// Stage 2: Confirm top candidates with accurate measurement
-	final := stage2Confirm(ctx, ranked, cfg, referenceSlot)
+	final := stage2Confirm(ctx, ranked, cfg, referenceSlot, nil)
 
 	// Fallback to Stage 1 results if Stage 2 fails completely
 	if len(final) == 0 {
@@ -1281,13 +1301,17 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 }
 
 // SortBestNodesWithStats filters and ranks snapshot sources by speed, updating stats
-// Returns addresses of nodes sorted by download speed (fastest first) and the ranked nodes for fallback search
+// Returns addresses of nodes sorted by download speed (fastest first), the ranked nodes for fallback search,
+// and SpeedTestStats for the filter pipeline display
 // referenceSlot is used for calculating current slot diff in Stage 2 output
-func SortBestNodesWithStats(results []NodeResult, cfg config.Config, stats *ProbeStats, referenceSlot int) ([]string, []RankedNode) {
+func SortBestNodesWithStats(results []NodeResult, cfg config.Config, stats *ProbeStats, referenceSlot int) ([]string, []RankedNode, *SpeedTestStats) {
 	if len(results) == 0 {
 		Logln("No nodes passed initial evaluation")
-		return nil, nil
+		return nil, nil, nil
 	}
+
+	// Create speed test stats to track Stage 1/2 filtering
+	speedStats := &SpeedTestStats{}
 
 	// Count initial nodes with snapshots
 	var withSnapshotsNodes []NodeResult
@@ -1359,20 +1383,20 @@ func SortBestNodesWithStats(results []NodeResult, cfg config.Config, stats *Prob
 
 	if len(afterIncAgeNodes) == 0 {
 		Logln("No nodes passed all filters")
-		return nil, nil
+		return nil, nil, speedStats
 	}
 
 	// Stage 1: Fast triage download speed test
 	ctx := context.Background()
-	ranked := stage1Triage(ctx, afterIncAgeNodes, cfg)
+	ranked := stage1Triage(ctx, afterIncAgeNodes, cfg, speedStats)
 
 	if len(ranked) == 0 {
 		Logln("No nodes passed Stage 1 speed sampling")
-		return nil, nil
+		return nil, nil, speedStats
 	}
 
 	// Stage 2: Confirm top candidates with accurate measurement
-	final := stage2Confirm(ctx, ranked, cfg, referenceSlot)
+	final := stage2Confirm(ctx, ranked, cfg, referenceSlot, speedStats)
 
 	// Fallback to Stage 1 results if Stage 2 fails completely
 	if len(final) == 0 {
@@ -1389,7 +1413,7 @@ func SortBestNodesWithStats(results []NodeResult, cfg config.Config, stats *Prob
 			Logf("  Stage 1 median: %.2f MB/s", ranked[0].S1.MedianMBs)
 			Logf("  Total candidates: %d", len(rpcs))
 		}
-		return rpcs, ranked
+		return rpcs, ranked, speedStats
 	}
 
 	// Extract node addresses from RankedNodes (already sorted by S2 speed)
@@ -1407,7 +1431,7 @@ func SortBestNodesWithStats(results []NodeResult, cfg config.Config, stats *Prob
 		Logf("  Total candidates: %d", len(nodes))
 	}
 
-	return nodes, final
+	return nodes, final, speedStats
 }
 
 // IncrementalInfo holds information about an incremental snapshot
@@ -1512,8 +1536,9 @@ func FindMatchingIncremental(rankedNodes []RankedNode, fullSnapshotSlot int64, t
 
 // SortBestRPCsFilteredBySlot filters nodes to only include those with full snapshot at or after minSlot
 // This is useful when you need nodes that have a specific full snapshot slot
-func SortBestRPCsFilteredBySlot(results []NodeResult, cfg config.Config, stats *ProbeStats, minSlot int64, referenceSlot int) ([]string, []RankedNode) {
-	nodes, ranked := SortBestNodesWithStats(results, cfg, stats, referenceSlot)
+// Returns the same values as SortBestNodesWithStats plus filtering by minSlot
+func SortBestRPCsFilteredBySlot(results []NodeResult, cfg config.Config, stats *ProbeStats, minSlot int64, referenceSlot int) ([]string, []RankedNode, *SpeedTestStats) {
+	nodes, ranked, speedStats := SortBestNodesWithStats(results, cfg, stats, referenceSlot)
 
 	// Filter to only include nodes with full snapshot at or after minSlot
 	if minSlot > 0 {
@@ -1526,9 +1551,9 @@ func SortBestRPCsFilteredBySlot(results []NodeResult, cfg config.Config, stats *
 			}
 		}
 		if len(filtered) > 0 {
-			return filtered, filteredRanked
+			return filtered, filteredRanked, speedStats
 		}
 	}
 
-	return nodes, ranked
+	return nodes, ranked, speedStats
 }
