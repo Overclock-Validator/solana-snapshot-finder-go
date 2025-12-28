@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -338,7 +337,7 @@ func EvaluateNodesWithVersionsAndStats(nodes []RPCNode, cfg config.Config, defau
 				processed := atomic.LoadInt32(&processedNodes)
 				withSnap := atomic.LoadInt64(&stats.HasAnySnapshot)
 				usableInc := atomic.LoadInt64(&stats.WithUsableInc)
-				log.Printf("Progress: %d/%d nodes processed (%.1f%%) | With snapshots: %d | With usable incremental: %d",
+				Logf("Progress: %d/%d nodes processed (%.1f%%) | With snapshots: %d | With usable incremental: %d",
 					processed, len(nodes), float64(processed)/float64(len(nodes))*100, withSnap, usableInc)
 			case <-done:
 				ticker.Stop()
@@ -516,14 +515,14 @@ func SummarizeResultsWithVersions(results []NodeResult) {
 		}
 	}
 
-	log.Printf("Node evaluation complete. Total: %d | With snapshots: %d | With incremental: %d | With usable incremental: %d",
+	Logf("Node evaluation complete. Total: %d | With snapshots: %d | With incremental: %d | With usable incremental: %d",
 		totalNodes, withSnapshots, withInc, withUsableInc)
 
-	log.Println("Top nodes by snapshot freshness:")
+	Logln("Top nodes by snapshot freshness:")
 	count := 0
 	for _, result := range results {
 		if result.FullSlot > 0 && count < 10 {
-			log.Printf("Node: %s | Latency: %.0fms | FullSlot: %d | IncSlot: %d | SlotDiff: %d | IncUsable: %t | Version: %s",
+			Logf("Node: %s | Latency: %.0fms | FullSlot: %d | IncSlot: %d | SlotDiff: %d | IncUsable: %t | Version: %s",
 				result.RPC, result.Latency, result.FullSlot, result.IncSlot, result.SlotDiff, result.IncUsable, result.Version)
 			count++
 		}
@@ -572,7 +571,7 @@ func DumpGoodAndSlowNodesToFile(results []NodeResult, outputFile string) {
 
 	file, err := os.Create(outputFile)
 	if err != nil {
-		log.Printf("Error creating output file: %v", err)
+		Logf("Error creating output file: %v", err)
 		return
 	}
 	defer file.Close()
@@ -580,11 +579,11 @@ func DumpGoodAndSlowNodesToFile(results []NodeResult, outputFile string) {
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(filteredNodes); err != nil {
-		log.Printf("Error writing to JSON file: %v", err)
+		Logf("Error writing to JSON file: %v", err)
 		return
 	}
 
-	log.Printf("Nodes with snapshots saved to %s", outputFile)
+	Logf("Nodes with snapshots saved to %s", outputFile)
 }
 
 // Helper functions for speed sampling
@@ -807,9 +806,9 @@ func stage1Triage(ctx context.Context, candidates []NodeResult, cfg config.Confi
 	var mu sync.Mutex
 
 	if !cfg.Quiet {
-		log.Printf("  Stage 1 config: conc=%d warmup=%dKiB window=%dKiB×%d timeout=%dms",
+		Logf("  Stage 1 config: conc=%d warmup=%dKiB window=%dKiB×%d timeout=%dms",
 			concurrency, cfg.Stage1WarmKiB, cfg.Stage1WindowKiB, cfg.Stage1Windows, cfg.Stage1TimeoutMS)
-		log.Printf("  Stage 1 input: %d candidates", len(candidates))
+		Logf("  Stage 1 input: %d candidates", len(candidates))
 	}
 
 	var tested int64
@@ -873,7 +872,7 @@ func stage1Triage(ctx context.Context, candidates []NodeResult, cfg config.Confi
 	})
 
 	if !cfg.Quiet {
-		log.Printf("  Stage 1 result: tested=%d passed=%d timeouts=%d errors=%d",
+		Logf("  Stage 1 result: tested=%d passed=%d timeouts=%d errors=%d",
 			tested, len(ranked), timeouts, errorsOnly)
 	}
 
@@ -1018,9 +1017,9 @@ func stage2Confirm(ctx context.Context, ranked []RankedNode, cfg config.Config, 
 	}
 
 	if !cfg.Quiet {
-		log.Printf("  Stage 2 config: warm=%ds measure=%ds minRatio=%.2f minAbs=%.1fMB/s",
+		Logf("  Stage 2 config: warm=%ds measure=%ds minRatio=%.2f minAbs=%.1fMB/s",
 			cfg.Stage2WarmSec, cfg.Stage2MeasureSec, cfg.Stage2MinRatio, cfg.Stage2MinAbsMBs)
-		log.Printf("  Stage 2 input: %d candidates (top %d from Stage 1, tested sequentially)", len(top), cfg.Stage2TopK)
+		Logf("  Stage 2 input: %d candidates (top %d from Stage 1, tested sequentially)", len(top), cfg.Stage2TopK)
 	}
 
 	// Run tests sequentially (concurrency=1) for accurate speed measurements on home internet
@@ -1087,7 +1086,7 @@ func stage2Confirm(ctx context.Context, ranked []RankedNode, cfg config.Config, 
 
 	otherErrors := int(tested) - len(out) - int(collapsed) - int(timeouts) - int(connFails)
 	if !cfg.Quiet {
-		log.Printf("  Stage 2 result: tested=%d passed=%d collapsed=%d timeouts=%d conn_fails=%d errors=%d",
+		Logf("  Stage 2 result: tested=%d passed=%d collapsed=%d timeouts=%d conn_fails=%d errors=%d",
 			tested, len(out), collapsed, timeouts, connFails, otherErrors)
 	}
 
@@ -1098,11 +1097,11 @@ func stage2Confirm(ctx context.Context, ranked []RankedNode, cfg config.Config, 
 
 	// Log detailed info for each passing node (helps identify problematic sources)
 	if len(out) > 0 && !cfg.Quiet {
-		log.Printf("  Stage 2 candidates (sorted by min speed):")
+		Logf("  Stage 2 candidates (sorted by min speed):")
 		for i, r := range out {
 			// Calculate distance from current slot to full snapshot slot
 			fullsnapDist := int64(currentSlot) - r.Result.FullSlot
-			log.Printf("    %d. %s | v%s | %.1f MB/s (min=%.1f max=%.1f) | rtt=%.0fms | conn=%.1fs | fullsnap_dist=%d",
+			Logf("    %d. %s | v%s | %.1f MB/s (min=%.1f max=%.1f) | rtt=%.0fms | conn=%.1fs | fullsnap_dist=%d",
 				i+1, r.Result.RPC, r.Result.Version, r.S2.AvgMBs, r.S2.MinMBs, r.S2.MaxMBs, r.Result.Latency, r.S2.ConnSec, fullsnapDist)
 		}
 	}
@@ -1122,13 +1121,13 @@ func SelectBestNode(results []NodeResult) string {
 	// Fallback: find the node with the freshest snapshot (even without usable incremental)
 	for _, result := range results {
 		if result.FullSlot > 0 {
-			log.Printf("No nodes with usable incremental found. Using node with fresh full snapshot: %s (slotDiff: %d, latency: %.0f ms)",
+			Logf("No nodes with usable incremental found. Using node with fresh full snapshot: %s (slotDiff: %d, latency: %.0f ms)",
 				result.RPC, result.SlotDiff, result.Latency)
 			return result.RPC
 		}
 	}
 
-	log.Println("No suitable snapshot sources found.")
+	Logln("No suitable snapshot sources found.")
 	return ""
 }
 
@@ -1137,7 +1136,7 @@ func SelectBestNode(results []NodeResult) string {
 // referenceSlot is used for calculating current slot diff in Stage 2 output
 func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) []string {
 	if len(results) == 0 {
-		log.Println("No nodes passed initial evaluation")
+		Logln("No nodes passed initial evaluation")
 		return nil
 	}
 
@@ -1152,9 +1151,9 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 		}
 	}
 
-	log.Printf("=== Snapshot Source Selection Pipeline ===")
-	log.Printf("  Initial nodes: %d", initialCount)
-	log.Printf("  With snapshots: %d", withSnapshots)
+	Logf("=== Snapshot Source Selection Pipeline ===")
+	Logf("  Initial nodes: %d", initialCount)
+	Logf("  With snapshots: %d", withSnapshots)
 
 	// Filter based on age and latency thresholds
 	var afterFullAgeNodes []NodeResult
@@ -1172,7 +1171,7 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 		}
 	}
 	afterFullAge = len(afterFullAgeNodes)
-	log.Printf("  After full_threshold (%d slots): %d", cfg.FullThreshold, afterFullAge)
+	Logf("  After full_threshold (%d slots): %d", cfg.FullThreshold, afterFullAge)
 
 	// Incremental snapshot age filter
 	var afterIncAgeNodes []NodeResult
@@ -1189,7 +1188,7 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 		afterIncAgeNodes = append(afterIncAgeNodes, r)
 	}
 	afterIncAge = len(afterIncAgeNodes)
-	log.Printf("  After incremental_threshold (%d slots): %d", cfg.IncrementalThreshold, afterIncAge)
+	Logf("  After incremental_threshold (%d slots): %d", cfg.IncrementalThreshold, afterIncAge)
 
 	// RTT filter (if enabled)
 	var afterRTTNodes []NodeResult
@@ -1200,11 +1199,11 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 			}
 		}
 		afterRTT = len(afterRTTNodes)
-		log.Printf("  After max_rtt_ms (%d ms): %d", cfg.MaxRTTMs, afterRTT)
+		Logf("  After max_rtt_ms (%d ms): %d", cfg.MaxRTTMs, afterRTT)
 	} else {
 		afterRTTNodes = afterIncAgeNodes
 		afterRTT = afterIncAge
-		log.Printf("  RTT filter: disabled")
+		Logf("  RTT filter: disabled")
 	}
 
 	// Version filter
@@ -1217,18 +1216,18 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 		}
 		afterVersion = len(eligible)
 		if len(cfg.AllowedNodeVersions) > 0 {
-			log.Printf("  After version filter (allowed: %v): %d", cfg.AllowedNodeVersions, afterVersion)
+			Logf("  After version filter (allowed: %v): %d", cfg.AllowedNodeVersions, afterVersion)
 		} else {
-			log.Printf("  After version filter (min: %s): %d", cfg.MinNodeVersion, afterVersion)
+			Logf("  After version filter (min: %s): %d", cfg.MinNodeVersion, afterVersion)
 		}
 	} else {
 		eligible = afterRTTNodes
 		afterVersion = afterRTT
-		log.Printf("  Version filter: disabled")
+		Logf("  Version filter: disabled")
 	}
 
 	if len(eligible) == 0 {
-		log.Println("No nodes passed age/latency/RTT/version filters")
+		Logln("No nodes passed age/latency/RTT/version filters")
 		return nil
 	}
 
@@ -1237,7 +1236,7 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 	ranked := stage1Triage(ctx, eligible, cfg)
 
 	if len(ranked) == 0 {
-		log.Println("No nodes passed Stage 1 speed sampling")
+		Logln("No nodes passed Stage 1 speed sampling")
 		return nil
 	}
 
@@ -1247,7 +1246,7 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 	// Fallback to Stage 1 results if Stage 2 fails completely
 	if len(final) == 0 {
 		if !cfg.Quiet {
-			log.Println("  Stage 2 failed completely - falling back to Stage 1 results")
+			Logln("  Stage 2 failed completely - falling back to Stage 1 results")
 		}
 		// Use Stage 1 results directly (already sorted by median speed)
 		var rpcs []string
@@ -1255,10 +1254,10 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 			rpcs = append(rpcs, r.Result.RPC)
 		}
 		if len(rpcs) > 0 && !cfg.Quiet {
-			log.Printf("=== Selection Complete (Stage 1 Fallback) ===")
-			log.Printf("  Selected: %s (v%s)", rpcs[0], ranked[0].Result.Version)
-			log.Printf("  Stage 1 median: %.2f MB/s", ranked[0].S1.MedianMBs)
-			log.Printf("  Total candidates: %d", len(rpcs))
+			Logf("=== Selection Complete (Stage 1 Fallback) ===")
+			Logf("  Selected: %s (v%s)", rpcs[0], ranked[0].Result.Version)
+			Logf("  Stage 1 median: %.2f MB/s", ranked[0].S1.MedianMBs)
+			Logf("  Total candidates: %d", len(rpcs))
 		}
 		return rpcs
 	}
@@ -1270,12 +1269,12 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 	}
 
 	if !cfg.Quiet {
-		log.Printf("=== Selection Complete ===")
-		log.Printf("  Selected: %s (v%s)", nodes[0], final[0].Result.Version)
-		log.Printf("  Stage 1 median: %.2f MB/s", final[0].S1.MedianMBs)
-		log.Printf("  Stage 2 avg: %.2f MB/s (min: %.2f, max: %.2f)",
+		Logf("=== Selection Complete ===")
+		Logf("  Selected: %s (v%s)", nodes[0], final[0].Result.Version)
+		Logf("  Stage 1 median: %.2f MB/s", final[0].S1.MedianMBs)
+		Logf("  Stage 2 avg: %.2f MB/s (min: %.2f, max: %.2f)",
 			final[0].S2.AvgMBs, final[0].S2.MinMBs, final[0].S2.MaxMBs)
-		log.Printf("  Total candidates: %d", len(nodes))
+		Logf("  Total candidates: %d", len(nodes))
 	}
 
 	return nodes
@@ -1286,7 +1285,7 @@ func SortBestNodes(results []NodeResult, cfg config.Config, referenceSlot int) [
 // referenceSlot is used for calculating current slot diff in Stage 2 output
 func SortBestNodesWithStats(results []NodeResult, cfg config.Config, stats *ProbeStats, referenceSlot int) ([]string, []RankedNode) {
 	if len(results) == 0 {
-		log.Println("No nodes passed initial evaluation")
+		Logln("No nodes passed initial evaluation")
 		return nil, nil
 	}
 
@@ -1359,7 +1358,7 @@ func SortBestNodesWithStats(results []NodeResult, cfg config.Config, stats *Prob
 	stats.Eligible = int64(len(afterIncAgeNodes))
 
 	if len(afterIncAgeNodes) == 0 {
-		log.Println("No nodes passed all filters")
+		Logln("No nodes passed all filters")
 		return nil, nil
 	}
 
@@ -1368,7 +1367,7 @@ func SortBestNodesWithStats(results []NodeResult, cfg config.Config, stats *Prob
 	ranked := stage1Triage(ctx, afterIncAgeNodes, cfg)
 
 	if len(ranked) == 0 {
-		log.Println("No nodes passed Stage 1 speed sampling")
+		Logln("No nodes passed Stage 1 speed sampling")
 		return nil, nil
 	}
 
@@ -1378,17 +1377,17 @@ func SortBestNodesWithStats(results []NodeResult, cfg config.Config, stats *Prob
 	// Fallback to Stage 1 results if Stage 2 fails completely
 	if len(final) == 0 {
 		if !cfg.Quiet {
-			log.Println("  Stage 2 failed completely - falling back to Stage 1 results")
+			Logln("  Stage 2 failed completely - falling back to Stage 1 results")
 		}
 		var rpcs []string
 		for _, r := range ranked {
 			rpcs = append(rpcs, r.Result.RPC)
 		}
 		if len(rpcs) > 0 && !cfg.Quiet {
-			log.Printf("=== Selection Complete (Stage 1 Fallback) ===")
-			log.Printf("  Selected: %s (v%s)", rpcs[0], ranked[0].Result.Version)
-			log.Printf("  Stage 1 median: %.2f MB/s", ranked[0].S1.MedianMBs)
-			log.Printf("  Total candidates: %d", len(rpcs))
+			Logf("=== Selection Complete (Stage 1 Fallback) ===")
+			Logf("  Selected: %s (v%s)", rpcs[0], ranked[0].Result.Version)
+			Logf("  Stage 1 median: %.2f MB/s", ranked[0].S1.MedianMBs)
+			Logf("  Total candidates: %d", len(rpcs))
 		}
 		return rpcs, ranked
 	}
@@ -1400,12 +1399,12 @@ func SortBestNodesWithStats(results []NodeResult, cfg config.Config, stats *Prob
 	}
 
 	if !cfg.Quiet {
-		log.Printf("=== Selection Complete ===")
-		log.Printf("  Selected: %s (v%s)", nodes[0], final[0].Result.Version)
-		log.Printf("  Stage 1 median: %.2f MB/s", final[0].S1.MedianMBs)
-		log.Printf("  Stage 2 avg: %.2f MB/s (min: %.2f, max: %.2f)",
+		Logf("=== Selection Complete ===")
+		Logf("  Selected: %s (v%s)", nodes[0], final[0].Result.Version)
+		Logf("  Stage 1 median: %.2f MB/s", final[0].S1.MedianMBs)
+		Logf("  Stage 2 avg: %.2f MB/s (min: %.2f, max: %.2f)",
 			final[0].S2.AvgMBs, final[0].S2.MinMBs, final[0].S2.MaxMBs)
-		log.Printf("  Total candidates: %d", len(nodes))
+		Logf("  Total candidates: %d", len(nodes))
 	}
 
 	return nodes, final
@@ -1462,32 +1461,32 @@ func FindMatchingIncremental(rankedNodes []RankedNode, fullSnapshotSlot int64, t
 		timeoutMs = 5000
 	}
 
-	log.Printf("Searching for incremental with base slot %d across %d nodes...", fullSnapshotSlot, len(rankedNodes))
+	Logf("Searching for incremental with base slot %d across %d nodes...", fullSnapshotSlot, len(rankedNodes))
 
 	// First, check cached data from initial evaluation
 	for i, node := range rankedNodes {
 		if node.Result.HasInc && node.Result.IncBase == fullSnapshotSlot {
-			log.Printf("  Node %d/%d (%s): cached match found (base=%d, end=%d)",
+			Logf("  Node %d/%d (%s): cached match found (base=%d, end=%d)",
 				i+1, len(rankedNodes), node.Result.RPC, node.Result.IncBase, node.Result.IncSlot)
 
 			// Verify by re-probing to get fresh URL
 			info, err := RefreshIncrementalInfo(node.Result.RPC, timeoutMs)
 			if err != nil {
-				log.Printf("    Warning: re-probe failed: %v, trying next node", err)
+				Logf("    Warning: re-probe failed: %v, trying next node", err)
 				continue
 			}
 
 			if info.BaseSlot == fullSnapshotSlot {
-				log.Printf("  Found matching incremental at %s (base=%d, end=%d)",
+				Logf("  Found matching incremental at %s (base=%d, end=%d)",
 					node.Result.RPC, info.BaseSlot, info.EndSlot)
 				return info, nil
 			}
-			log.Printf("    Warning: cached data was stale (now base=%d), trying next node", info.BaseSlot)
+			Logf("    Warning: cached data was stale (now base=%d), trying next node", info.BaseSlot)
 		}
 	}
 
 	// Second pass: re-probe all nodes (their incrementals may have been updated)
-	log.Printf("  No cached matches, re-probing all nodes...")
+	Logf("  No cached matches, re-probing all nodes...")
 	for i, node := range rankedNodes {
 		if !node.Result.HasInc {
 			continue
@@ -1499,12 +1498,12 @@ func FindMatchingIncremental(rankedNodes []RankedNode, fullSnapshotSlot int64, t
 		}
 
 		if info.BaseSlot == fullSnapshotSlot {
-			log.Printf("  Found matching incremental at %s (base=%d, end=%d) after re-probe",
+			Logf("  Found matching incremental at %s (base=%d, end=%d) after re-probe",
 				node.Result.RPC, info.BaseSlot, info.EndSlot)
 			return info, nil
 		}
 
-		log.Printf("  Node %d/%d (%s): base=%d (not a match)",
+		Logf("  Node %d/%d (%s): base=%d (not a match)",
 			i+1, len(rankedNodes), node.Result.RPC, info.BaseSlot)
 	}
 

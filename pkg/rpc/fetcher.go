@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -138,7 +138,7 @@ func GetRPCNodes(rpcAddress string, retries int, blacklist []string, enableBlack
 	// Validate whitelist_mode
 	validModes := map[string]bool{"only": true, "additional": true, "disabled": true}
 	if !validModes[whitelistMode] {
-		log.Printf("Warning: Invalid whitelist_mode '%s', defaulting to 'additional'", whitelistMode)
+		Logf("Warning: Invalid whitelist_mode '%s', defaulting to 'additional'\n", whitelistMode)
 		whitelistMode = "additional"
 	}
 
@@ -150,18 +150,18 @@ func GetRPCNodes(rpcAddress string, retries int, blacklist []string, enableBlack
 		if len(sources) == 0 {
 			return nil, nil, fmt.Errorf("whitelist_mode is 'only' but whitelist is empty")
 		}
-		log.Printf("Using whitelist-only mode with %d entries", len(sources))
+		Logf("Using whitelist-only mode with %d entries\n", len(sources))
 
 	case "additional":
 		// Get public nodes + whitelist
 		publicNodes, err := getPublicNodes(rpcAddress, retries)
 		if err != nil {
-			log.Printf("Warning: Failed to fetch public nodes: %v", err)
+			Logf("Warning: Failed to fetch public nodes: %v\n", err)
 		}
 		whitelistNodes := parseWhitelist(whitelist)
 		sources = append(publicNodes, whitelistNodes...)
 		if len(whitelistNodes) > 0 {
-			log.Printf("Using %d public nodes + %d whitelist entries", len(publicNodes), len(whitelistNodes))
+			Logf("Using %d public nodes + %d whitelist entries\n", len(publicNodes), len(whitelistNodes))
 		}
 
 	case "disabled":
@@ -179,10 +179,10 @@ func GetRPCNodes(rpcAddress string, retries int, blacklist []string, enableBlack
 		sources = filterBlacklist(sources, blacklist)
 		filtered := beforeCount - len(sources)
 		if filtered > 0 {
-			log.Printf("Blacklist filtered out %d nodes", filtered)
+			Logf("Blacklist filtered out %d nodes\n", filtered)
 		}
 	} else if !enableBlacklist && len(blacklist) > 0 {
-		log.Printf("Blacklist is disabled (contains %d entries but not filtering)", len(blacklist))
+		Logf("Blacklist is disabled (contains %d entries but not filtering)\n", len(blacklist))
 	}
 
 	// Extract addresses for compatibility
@@ -252,12 +252,12 @@ func GetReferenceSlotFromMultiple(rpcAddresses []string) (int, string, error) {
 	for _, rpc := range rpcAddresses {
 		slot, err := GetReferenceSlot(rpc)
 		if err != nil {
-			log.Printf("RPC %s failed to get slot: %v", rpc, err)
+			Logf("RPC %s failed to get slot: %v\n", rpc, err)
 			lastErr = err
 			continue
 		}
 		successCount++
-		log.Printf("RPC %s returned slot: %d", rpc, slot)
+		Logf("RPC %s returned slot: %d\n", rpc, slot)
 		if slot > highestSlot {
 			highestSlot = slot
 			bestRPC = rpc
@@ -269,10 +269,10 @@ func GetReferenceSlotFromMultiple(rpcAddresses []string) (int, string, error) {
 	}
 
 	if successCount < len(rpcAddresses) {
-		log.Printf("Warning: %d/%d RPC endpoints responded", successCount, len(rpcAddresses))
+		Logf("Warning: %d/%d RPC endpoints responded\n", successCount, len(rpcAddresses))
 	}
 
-	log.Printf("Using reference slot %d from %s (highest among %d sources)", highestSlot, bestRPC, successCount)
+	Logf("Using reference slot %d from %s (highest among %d sources)\n", highestSlot, bestRPC, successCount)
 	return highestSlot, bestRPC, nil
 }
 
@@ -304,17 +304,19 @@ func FetchClusterNodes(cfg config.Config, preferredRPC string) []RPCNode {
 			cfg.WhitelistMode,
 		)
 		if err == nil && len(nodes) > 0 {
-			log.Printf("Fetched %d cluster nodes from %s", len(nodes), rpcAddr)
+			Logf("Fetched %d cluster nodes from %s\n", len(nodes), rpcAddr)
 			return nodes
 		}
 
-		log.Printf("Failed to fetch cluster nodes from %s: %v", rpcAddr, err)
+		Logf("Failed to fetch cluster nodes from %s: %v\n", rpcAddr, err)
 	}
 
 	if err != nil {
-		log.Fatalf("Failed to fetch cluster nodes from any endpoint: %v", err)
+		Logf("FATAL: Failed to fetch cluster nodes from any endpoint: %v\n", err)
+		os.Exit(1)
 	} else if len(nodes) == 0 {
-		log.Fatalf("No cluster nodes found from any endpoint.")
+		Logf("FATAL: No cluster nodes found from any endpoint.\n")
+		os.Exit(1)
 	}
 
 	return nil // Should not reach here
