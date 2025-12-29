@@ -611,9 +611,9 @@ func PrintStage2CandidatesTable(candidates []RankedNodeInfo) {
 
 	fmt.Println()
 	fmt.Printf("%s┌──────────────────────────────────────────────────────────────────────────────┐%s\n", c, r)
-	fmt.Printf("%s│%s STAGED SPEED CANDIDATES (top %d by speed)                                    %s│%s\n", c, r, len(candidates), c, r)
+	fmt.Printf("%s│%s STAGED SPEED CANDIDATES (top %d by speed)                                     %s│%s\n", c, r, len(candidates), c, r)
 	fmt.Printf("%s├────┬─────────────────────────┬─────────┬───────┬─────────────────────────────┤%s\n", c, r)
-	fmt.Printf("%s│%s #  │ Node IP                 │ Version │ RTT   │ Speed (MB/s)                %s│%s\n", c, r, c, r)
+	fmt.Printf("%s│%s #  │ Node IP                 │ Version │ RTT ms│ Speed (MB/s)                %s│%s\n", c, r, c, r)
 	fmt.Printf("%s├────┼─────────────────────────┼─────────┼───────┼─────────────────────────────┤%s\n", c, r)
 
 	for _, node := range candidates {
