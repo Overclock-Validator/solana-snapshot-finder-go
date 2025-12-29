@@ -246,7 +246,7 @@ func (s *ProbeStats) PrintNodeDiscoveryReport() {
 	// Box width = 80 chars to match Mithril banner width
 	fmt.Println()
 	fmt.Printf("%s╔══════════════════════════════════════════════════════════════════════════════╗%s\n", c, r)
-	fmt.Printf("%s║%s                          NODE DISCOVERY REPORT                              %s║%s\n", c, r, c, r)
+	fmt.Printf("%s║%s                           NODE DISCOVERY REPORT                              %s║%s\n", c, r, c, r)
 	fmt.Printf("%s╚══════════════════════════════════════════════════════════════════════════════╝%s\n", c, r)
 	fmt.Println()
 
@@ -640,7 +640,7 @@ func PrintStage2CandidatesTable(candidates []RankedNodeInfo) {
 		rttStr := fmt.Sprintf("%d", node.RTTMs)
 
 		// Columns: # (4) + Node IP (25) + Version (9) + RTT (7) + Speed (29) = 74 inner + 6 borders = 80
-		fmt.Printf("%s│%s %-2d │ %-23s │ %-7s │ %5s │ %6.1f (%s)              %s│%s\n",
+		fmt.Printf("%s│%s %-2d │ %-23s │ %-7s │ %5s │ %6.1f (%s)                 %s│%s\n",
 			c, r, node.Rank, ip, version, rttStr, speed, speedLabel, c, r)
 	}
 
